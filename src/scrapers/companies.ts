@@ -283,16 +283,17 @@ async function scrapeIABG(): Promise<JobInput[]> {
 }
 
 async function scrapeDiehl(): Promise<JobInput[]> {
-  // Verifizierte Detail-URL-Struktur: /career/de/jobs-bewerbung/stellenboerse/{slug}/
-  // Listing ohne Location-Filter; Munich-Match per Slug-Heuristik (job-Titel enthalten
-  // oft den Standort). TODO: URL mit Standort-Filter ergänzen sobald bekannt.
+  // Diehl bietet eine vorgelilterte Listing-URL mit Geo-Coordinate-Radius.
+  // Wir nutzen München + 25 km Radius → deckt Ottobrunn, Gilching etc. ab.
+  // Da die URL bereits server-seitig filtert, können wir assumeLocation: true
+  // setzen und ersparen uns die context-basierte München-Erkennung.
   return scrapeGenericHtml({
     company: 'Diehl',
-    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/',
+    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/?c=de&location=M%C3%BCnchen&radius=25&lat=48.1351253&lng=11.5819806',
     hrefPattern: /\/career\/de\/jobs-bewerbung\/stellenboerse\/[a-z0-9-]+\/?$/i,
     defaultLocation: 'München',
     sourcePortal: 'diehl-html',
-    assumeLocation: false,
+    assumeLocation: true,
     minTitleLen: 10,
   });
 }
