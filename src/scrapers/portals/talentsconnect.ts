@@ -18,17 +18,18 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
   const $ = cheerio.load(html);
   const out: JobInput[] = [];
 
-  // talentsconnect-Templates rendern Job-Karten meist als <a href="/offer/...">.
-  $('a[href*="/offer/"]').each((_, a) => {
+  // Verifizierte talentsconnect DOM-Struktur (jobs.neura-robotics.com):
+  //   <a data-type="offer" class="item" href="https://.../offer/{slug}/{uuid}">
+  //     <span class="h3">Titel</span>
+  //     <span class="p cityNames">Munich</span>
+  //   </a>
+  $('a[data-type="offer"], a[href*="/offer/"]').each((_, a) => {
     const $a = $(a);
     const href = $a.attr('href');
     if (!href) return;
     const url = href.startsWith('http') ? href : new URL(href, cfg.baseUrl).toString();
-    const card = $a.closest('article, li, div');
-    const title = ($a.find('h2,h3').first().text() || $a.text()).trim().replace(/\s+/g, ' ');
-    const location = card.find('[class*="location"], [class*="city"]').first().text().trim()
-      || /\(([^)]+)\)/.exec($a.text())?.[1]
-      || '';
+    const title = ($a.find('.h3, h3').first().text() || $a.find('h2').text() || '').trim().replace(/\s+/g, ' ');
+    const location = ($a.find('.cityNames, [class*="city"], [class*="location"]').first().text() || '').trim().replace(/\s+/g, ' ');
     if (!title) return;
     if (!isMunichArea(location)) return;
     const job: JobInput = {

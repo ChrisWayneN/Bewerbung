@@ -215,13 +215,17 @@ async function scrapeIABG(): Promise<JobInput[]> {
 }
 
 async function scrapeDiehl(): Promise<JobInput[]> {
-  // Verifizierte Stellenbörse-URL
+  // Verifizierte Detail-URL-Struktur: /career/de/jobs-bewerbung/stellenboerse/{slug}/
+  // Listing ohne Location-Filter; Munich-Match per Slug-Heuristik (job-Titel enthalten
+  // oft den Standort). TODO: URL mit Standort-Filter ergänzen sobald bekannt.
   return scrapeGenericHtml({
     company: 'Diehl',
     listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/',
-    hrefPattern: /\/(stelle|job|position|offer)\//i,
+    hrefPattern: /\/career\/de\/jobs-bewerbung\/stellenboerse\/[a-z0-9-]+\/?$/i,
     defaultLocation: 'München',
     sourcePortal: 'diehl-html',
+    assumeLocation: false,
+    minTitleLen: 10,
   });
 }
 
