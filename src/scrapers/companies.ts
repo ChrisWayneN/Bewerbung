@@ -15,6 +15,7 @@ import { scrapeWorkday } from './portals/workday';
 import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
+import { scrapeSapCSB } from './portals/sapCSB';
 
 export interface CompanyMeta {
   name: string;
@@ -148,13 +149,11 @@ async function scrapeSiemens(): Promise<JobInput[]> {
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
-  // KNDS jobs.knds.de – versuche zuerst HTML, dann Phenom-ähnliche API.
-  return scrapeGenericHtml({
+  // KNDS nutzt SAP SuccessFactors Career Site Builder.
+  // Verifiziert: https://jobs.knds.de/content/search/?locale=de_DE&currentPage=1&pageSize=6
+  return scrapeSapCSB({
     company: 'KNDS',
-    listingUrl: 'https://jobs.knds.de/viewalljobs/content/search/?locale=de_DE&q=&location=M%C3%BCnchen',
-    hrefPattern: /\/job\/|\/career\/|\/stelle\/|jobs?\/[a-z]/i,
-    defaultLocation: 'München',
-    sourcePortal: 'knds-html',
+    baseUrl: 'https://jobs.knds.de',
   });
 }
 
