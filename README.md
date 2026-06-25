@@ -11,6 +11,14 @@ Job-Tracking-Tool für 21 Firmen im Großraum München (30-km-Radius).
 
 ## Setup
 
+### Variante A – Doppelklick (Windows)
+
+1. [Node.js LTS](https://nodejs.org) installieren (einmalig).
+2. **`start.bat` doppelklicken** – installiert beim ersten Lauf alles, scrapt, öffnet den Browser.
+3. Später: `update.bat` doppelklicken für neuen Job-Import.
+
+### Variante B – Kommandozeile
+
 ```bash
 npm install
 npm run scrape    # initialer Import (~1–2 Minuten)
