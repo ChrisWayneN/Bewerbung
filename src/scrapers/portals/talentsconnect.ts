@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import type { JobInput } from '../../lib/db';
 import { isMunichArea, hashJob, fetchText } from '../base';
 import { extractSectionsFromHtml } from '../extract';
+import { extractInlineJson, findJobArrays, pickString } from '../inlineJson';
 
 /**
  * talentsconnect-AG-hosted careers pages (z. B. jobs.neura-robotics.com).
@@ -55,7 +56,16 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
   });
 
   const seen = new Set<string>();
-  const deduped = out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+  let deduped = out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+
+  // Fallback: wenn DOM nichts geliefert hat, im HTML eingebetteten JSON-State suchen.
+  if (deduped.length === 0) {
+    const fromJson = tryInlineJson(html, cfg);
+    if (fromJson.length > 0) {
+      console.log(`  [debug ${cfg.company}] talentsconnect via inline-JSON: ${fromJson.length} Treffer`);
+      return fromJson;
+    }
+  }
 
   if (deduped.length === 0) {
     console.log(`  [debug ${cfg.company}] talentsconnect 0 Treffer:`);
@@ -66,9 +76,52 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
     } else {
       console.log(`    Keine Anchors mit a[data-type="offer"] gefunden – DOM-Struktur vermutlich geändert.`);
     }
+    // Diagnose der inline-JSON-Slots (auch wenn kein job daraus extrahiert wurde):
+    const slots = extractInlineJson(html);
+    if (slots.length) {
+      console.log(`    Gefundene inline-JSON-Slots: ${slots.map(s => s.source).join(', ')}`);
+    }
   }
 
   return deduped;
+}
+
+function tryInlineJson(html: string, cfg: TalentsConnectConfig): JobInput[] {
+  const slots = extractInlineJson(html);
+  for (const slot of slots) {
+    const arrays = findJobArrays(slot.data);
+    for (const a of arrays) {
+      const out: JobInput[] = [];
+      for (const item of a.jobs) {
+        const title = pickString(item, ['title', 'name', 'jobTitle', 'positionTitle']);
+        if (!title) continue;
+        const location = pickString(item, ['city', 'cityNames', 'location', 'locationName', 'office']) ?? '';
+        if (!isMunichArea(location)) continue;
+        const href = pickString(item, ['url', 'href', 'permalink', 'detailUrl', 'absoluteUrl', 'jobUrl']);
+        const id = pickString(item, ['id', 'jobId', 'uuid', 'slug']);
+        const url = href
+          ? (href.startsWith('http') ? href : `${cfg.baseUrl.replace(/\/$/, '')}${href.startsWith('/') ? '' : '/'}${href}`)
+          : (id ? `${cfg.baseUrl.replace(/\/$/, '')}/offer/${id}` : null);
+        if (!url) continue;
+        const job: JobInput = {
+          company: cfg.company,
+          title,
+          location: location || null,
+          url,
+          source_portal: 'talentsconnect-json',
+        };
+        job.hash = hashJob(job);
+        out.push(job);
+      }
+      if (out.length) return dedupeByUrl(out);
+    }
+  }
+  return [];
+}
+
+function dedupeByUrl(jobs: JobInput[]): JobInput[] {
+  const seen = new Set<string>();
+  return jobs.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
 }
 
 /** Reichert einen einzelnen Job mit Description + extrahierten Sections an. */

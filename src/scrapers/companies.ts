@@ -156,65 +156,88 @@ async function scrapeSiemens(): Promise<JobInput[]> {
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
-  // Custom System (recruiting-solutions.org). Erwartete DOM-Struktur:
-  //   <a class="search-item-wrapper" href=".../job-invite/{id}/...">
-  //     <h3 class="title">...</h3>
-  //     <div class="locations">München</div>
-  //   </a>
+  // jobs.knds.de ist eine SPA (recruiting-solutions.org / SAP CSB). 31 kb HTML-
+  // Shell → keine Job-Links im Markup. Wir probieren bekannte JSON-Endpoints,
+  // die solche Career-Portale typischerweise haben, dann Sitemap, dann Inline-JSON.
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  const pageSize = 100;
-  let lastHtmlSize = 0;
-  let lastAnchorCount = 0;
-  const sampleLocations: string[] = [];
+  const debug: string[] = [];
 
-  for (let page = 1; page <= 20; page++) {
-    const url = `https://jobs.knds.de/content/search/?locale=de_DE&currentPage=${page}&pageSize=${pageSize}`;
-    const html = await fetchText(url);
-    lastHtmlSize = html.length;
-    const $ = cheerio.load(html);
-    let items = $('a.search-item-wrapper');
-    // Fallback-Selektoren falls Klasse umbenannt wurde.
-    if (!items.length) items = $('a[class*="search-item"], a[class*="job-item"], a[href*="/job-invite/"], a[href*="/job/"]');
-    lastAnchorCount = items.length;
-    if (!items.length) break;
-
-    let added = 0;
-    items.each((_, a) => {
-      const $a = $(a);
-      const href = $a.attr('href');
-      const title = ($a.find('h3.title, .title, h3, h2').first().text() || $a.text()).trim().replace(/\s+/g, ' ');
-      const location = $a.find('div.locations, .locations, [class*="location"], [class*="city"]').first().text().trim().replace(/\s+/g, ' ');
-      if (!href || !title) return;
-      if (sampleLocations.length < 5) sampleLocations.push(`${title.slice(0, 60)} → "${location}"`);
-      if (!isMunichArea(location)) return;
-      const fullUrl = href.startsWith('http') ? href : new URL(href, 'https://jobs.knds.de').toString();
-      if (seen.has(fullUrl)) return;
-      seen.add(fullUrl);
-      const job: JobInput = {
-        company: 'KNDS',
-        title,
-        location,
-        url: fullUrl,
-        source_portal: 'knds-rs',
-      };
-      job.hash = hashJob(job);
-      out.push(job);
-      added++;
-    });
-
-    if (items.length < pageSize) break;
-    if (added === 0 && page > 1) break;
+  // (1) Bekannte JSON-Endpoint-Muster für SAP CSB / recruiting-solutions.org.
+  const apiCandidates = [
+    'https://jobs.knds.de/api/jobs?locale=de_DE&pageSize=200&currentPage=1',
+    'https://jobs.knds.de/api/v1/jobs?locale=de_DE&pageSize=200',
+    'https://jobs.knds.de/content/api/search?locale=de_DE&pageSize=200&currentPage=1',
+    'https://jobs.knds.de/services/jobsearch?locale=de_DE&pageSize=200',
+    'https://jobs.knds.de/jobs.json?locale=de_DE',
+  ];
+  for (const url of apiCandidates) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          accept: 'application/json',
+          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        },
+      });
+      debug.push(`  API ${url} → ${res.status}`);
+      if (!res.ok) continue;
+      const text = await res.text();
+      let data: any;
+      try { data = JSON.parse(text); } catch { continue; }
+      const arr: any[] = data?.jobs ?? data?.results ?? data?.items ?? data?.content ?? [];
+      if (!Array.isArray(arr) || arr.length === 0) continue;
+      for (const it of arr) {
+        const title = it.title || it.jobTitle || it.name;
+        const location = it.location || it.locations || it.city || it.workLocation || '';
+        const id = it.id || it.jobId || it.requisitionId;
+        const href = it.url || it.applyUrl || it.detailUrl || (id ? `https://jobs.knds.de/job-invite/${id}/` : null);
+        if (!title || !href) continue;
+        if (!isMunichArea(typeof location === 'string' ? location : JSON.stringify(location))) continue;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        const job: JobInput = {
+          company: 'KNDS',
+          title,
+          location: typeof location === 'string' ? location : 'München',
+          url: href,
+          source_portal: 'knds-api',
+        };
+        job.hash = hashJob(job);
+        out.push(job);
+      }
+      if (out.length) return out;
+    } catch (e) {
+      debug.push(`  API ${url} → ${(e as Error).message}`);
+    }
   }
 
+  // (2) Sitemap-Fallback
+  try {
+    const sm = await fetchText('https://jobs.knds.de/sitemap.xml', { headers: { accept: 'application/xml' } });
+    debug.push(`  sitemap.xml: ${sm.length} bytes`);
+    const urls = Array.from(sm.matchAll(/<loc>([^<]+)<\/loc>/g)).map(m => m[1]).filter(u => /job-invite|\/job\//.test(u));
+    if (urls.length) {
+      debug.push(`  sitemap: ${urls.length} job URLs gefunden`);
+      // Sitemap liefert nur URLs, kein Standort. Wir können nicht ohne weitere Calls auf München filtern.
+      // → Verzicht aus Performance-Gründen; nur loggen.
+    }
+  } catch (e) {
+    debug.push(`  sitemap.xml → ${(e as Error).message}`);
+  }
+
+  // (3) Inline-JSON-Slots im HTML-Shell loggen (für nächste Diagnose-Runde)
+  let shellHtml = '';
+  try {
+    shellHtml = await fetchText('https://jobs.knds.de/content/search/?locale=de_DE&pageSize=200');
+  } catch { /* ignore */ }
+
   if (out.length === 0) {
-    console.log(`  [debug KNDS] 0 Treffer:`);
-    console.log(`    HTML ${lastHtmlSize} bytes · ${lastAnchorCount} job-Anchors gefunden`);
-    if (sampleLocations.length) {
-      console.log(`    Sample-Einträge (vor Munich-Filter):`);
-      sampleLocations.forEach(s => console.log(`      ${s}`));
-    } else {
-      console.log(`    Keine Anchors gematched – Selector oder Listing-URL veraltet.`);
+    console.log(`  [debug KNDS] 0 Treffer (alle API/Sitemap-Strategien fehlgeschlagen):`);
+    debug.forEach(d => console.log(d));
+    if (shellHtml) {
+      const slots = extractInlineJson(shellHtml);
+      console.log(`  Shell-HTML: ${shellHtml.length} bytes, inline-JSON-Slots: ${slots.map(s => s.source).join(', ') || 'keine'}`);
     }
   }
 
