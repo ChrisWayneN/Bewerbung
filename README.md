@@ -88,7 +88,7 @@ db/
 scripts/scrape.ts                    # CLI
 ```
 
-## Firmen-Status (14 Zielunternehmen)
+## Firmen-Status (13 Zielunternehmen)
 
 | Status | Firma | Portal | Endpoint |
 |---|---|---|---|
@@ -97,15 +97,14 @@ scripts/scrape.ts                    # CLI
 | ✅ | Agile Robots SE | Personio | `agile-robots-se.jobs.personio.de` |
 | ✅ | Franka Robotics | Personio | `franka-robotics.jobs.personio.de` |
 | ✅ | Siemens | Phenom People | `jobs.siemens.com/api/jobs` |
-| ✅ | IABG | HTML | `iabg.de/karriere/stellenangebote` (HQ Ottobrunn) |
+| ✅ | IABG | Engage-Servlet | `jobboerse.iabg.de/engage/jobexchange/` (HQ Ottobrunn) |
+| ✅ | KNDS | SAP SF CSB | `jobs.knds.de/content/search/` |
+| ✅ | Infineon | Eightfold AI | `jobs.infineon.com/api/apply/v2/jobs` |
 | ⚠️ | Quantum Systems | Personio→HTML | versucht Personio-Slug `quantum-systems`, fällt auf `career.quantum-systems.com` zurück |
-| ⚠️ | Neura Robotics | talentsconnect | `jobs.neura-robotics.com` |
-| ⚠️ | Infineon | Workday→HTML | `infineon` Workday-Tenant, sonst HTML-Suche |
-| ⚠️ | KNDS | HTML | `jobs.knds.de` |
+| ⚠️ | Neura Robotics | talentsconnect | `jobs.neura-robotics.com/search` |
 | ⚠️ | Rohde & Schwarz | HTML | `rohde-schwarz.com` (AEM, kein offenes JSON) |
-| ⚠️ | Diehl | HTML | `diehl.com/career` (Plattform unklar) |
+| ⚠️ | Diehl | HTML | `diehl.com/career/de/jobs-bewerbung/stellenboerse/` |
 | ⚠️ | MTU | HTML | `mtu.de/careers/online-job-market` |
-| ⚠️ | MAN | HTML | `jobs.man.eu` |
 
 ⚠️-Scraper: bei Misserfolg wird automatisch ein „link-only"-Eintrag erzeugt, damit die Firma sichtbar bleibt.
 

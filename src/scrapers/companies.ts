@@ -16,6 +16,7 @@ import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeSapCSB } from './portals/sapCSB';
+import { scrapeEightfold } from './portals/eightfold';
 
 export interface CompanyMeta {
   name: string;
@@ -28,18 +29,17 @@ export interface CompanyMeta {
 export const COMPANIES: CompanyMeta[] = [
   { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'phenom/own',     status: '⚠️', note: 'Eigenes Portal jobs.knds.de – Phenom-ähnlich. HTML-Fallback.' },
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html', portal: 'AEM-custom',     status: '⚠️', note: 'Eigene AEM-Seite, kein offenes JSON. HTML-Fallback.' },
-  { name: 'IABG',            careersUrl: 'https://www.iabg.de/karriere/stellenangebote',         portal: 'html',           status: '✅', note: 'HQ Ottobrunn – HTML einfach.' },
+  { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet)' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://hensoldt.wd3.myworkdayjobs.com/External_Career_Site', portal: 'workday', status: '✅', note: 'wd3, tenant=hensoldt, site=External_Career_Site' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Infineon',        careersUrl: 'https://jobs.infineon.com/careers',                    portal: 'custom',         status: '⚠️', note: 'jobs.infineon.com – probiert mehrere API-Varianten' },
+  { name: 'Infineon',        careersUrl: 'https://jobs.infineon.com/careers',                    portal: 'eightfold',      status: '✅', note: 'Eightfold AI: /api/apply/v2/jobs' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '⚠️', note: 'MTU Aero Engines – HTML-Liste' },
-  { name: 'MAN',             careersUrl: 'https://jobs.man.eu/',                                 portal: 'html',           status: '⚠️', note: 'MAN Truck & Bus – HTML' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
-  { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/',                     portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
+  { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -91,19 +91,14 @@ async function scrapeQuantum(): Promise<JobInput[]> {
 }
 
 async function scrapeInfineon(): Promise<JobInput[]> {
-  // Infineon nutzt ein eigenes System auf jobs.infineon.com. Wir probieren
-  // zuerst die typische Workday-CXS-Variante, dann eine REST-Suche.
-  try {
-    return await scrapeWorkday({ company: 'Infineon', tenant: 'infineon', wd: 3, site: 'Infineon' }, true);
-  } catch {
-    return scrapeGenericHtml({
-      company: 'Infineon',
-      listingUrl: 'https://www.infineon.com/cms/en/careers/jobsearch/jobsearch/?searchLocation=Munich',
-      hrefPattern: /(job|jobs?\/details|position)/i,
-      defaultLocation: 'München',
-      sourcePortal: 'infineon-html',
-    });
-  }
+  // Verifiziert: Infineon nutzt Eightfold AI. URL-Parameter pid + filter_distance.
+  return scrapeEightfold({
+    company: 'Infineon',
+    baseUrl: 'https://jobs.infineon.com',
+    location: 'Munich, BY, Germany',
+    radiusKm: 50,
+    pid: '563808970681317',
+  });
 }
 
 async function scrapeSiemens(): Promise<JobInput[]> {
@@ -169,34 +164,35 @@ async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
+  // Verifiziert: IABG nutzt ein Engage-Jobbörsen-System unter jobboerse.iabg.de.
   return scrapeGenericHtml({
     company: 'IABG',
-    listingUrl: 'https://www.iabg.de/karriere/stellenangebote',
-    hrefPattern: /(stellenangebot|jobs?|karriere|career)/i,
+    listingUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?languageChanged=true&j=myjobexchange',
+    hrefPattern: /(jobOffer|jobExchange|viewJobOffer|engage).*\.do/i,
     defaultLocation: 'Ottobrunn',
-    sourcePortal: 'iabg-html',
+    sourcePortal: 'iabg-engage',
     assumeLocation: true,
     minTitleLen: 5,
   });
 }
 
 async function scrapeDiehl(): Promise<JobInput[]> {
+  // Verifizierte Stellenbörse-URL
   return scrapeGenericHtml({
     company: 'Diehl',
-    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',
-    hrefPattern: /(stelle|job|position|offer)/i,
+    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/',
+    hrefPattern: /\/(stelle|job|position|offer)\//i,
     defaultLocation: 'München',
     sourcePortal: 'diehl-html',
   });
 }
 
 async function scrapeMTU(): Promise<JobInput[]> {
-  // MTU listet alle Standorte – wir filtern hart auf München-Whitelist im Kontext.
-  // (vorher: 132 Treffer = alle Stellen weltweit; Filter griff nicht)
+  // MTU listet alle Standorte – wir parsen alle Job-Links, München-Filter über Kontext.
   return scrapeGenericHtml({
     company: 'MTU',
     listingUrl: 'https://www.mtu.de/careers/online-job-market/',
-    hrefPattern: /\/careers?\/online-job-market\/job-details/i,
+    hrefPattern: /\/(careers?|jobs?)\//i,
     defaultLocation: 'München',
     sourcePortal: 'mtu-html',
     assumeLocation: false,
@@ -204,17 +200,8 @@ async function scrapeMTU(): Promise<JobInput[]> {
   });
 }
 
-async function scrapeMAN(): Promise<JobInput[]> {
-  return scrapeGenericHtml({
-    company: 'MAN',
-    listingUrl: 'https://jobs.man.eu/?locale=de_DE&location=M%C3%BCnchen',
-    hrefPattern: /(job|stelle|position|career)/i,
-    defaultLocation: 'München',
-    sourcePortal: 'man-html',
-  });
-}
-
 async function scrapeNeura(): Promise<JobInput[]> {
+  // talentsconnect liefert die Stellen auf der /search-Seite.
   return scrapeTalentsConnect({
     company: 'Neura Robotics',
     baseUrl: 'https://jobs.neura-robotics.com',
@@ -237,7 +224,6 @@ export const scrapers: Scraper[] = [
   { company: 'IABG',            run: wrap('IABG',            scrapeIABG) },
   { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
-  { company: 'MAN',             run: wrap('MAN',             scrapeMAN) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {
