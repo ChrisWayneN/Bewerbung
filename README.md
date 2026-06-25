@@ -30,10 +30,29 @@ npm run dev       # UI auf http://localhost:3000/jobs
 ## CLI-Optionen
 
 ```bash
-npm run scrape                       # alle 21 Firmen
+npm run scrape                       # alle 14 Firmen
 npm run scrape -- --only Airbus      # nur Airbus
-npm run scrape -- --only Personio    # alle die "personio" matchen
+npm run scrape -- --only Hensoldt,Airbus,IABG
 npm run scrape -- --concurrency 2    # langsam-und-sicher
+npm run reset                        # entfernt Einträge alter Firmen aus der DB
+```
+
+## Aktualisierungs-Workflow nach Code-Update
+
+```bash
+git pull                # neue Scraper-Konfiguration ziehen
+npm install             # nur nötig falls package.json sich änderte
+npm run reset           # alte Firmen-Einträge aus DB entfernen
+npm run scrape          # frischer Import
+# Browser-Tab neu laden – fertig
+```
+
+Komplett-Reset (DB plattmachen):
+```bash
+# Windows
+del db\jobs.db && npm run scrape
+# Linux/macOS
+rm db/jobs.db && npm run scrape
 ```
 
 ## UI
@@ -69,33 +88,26 @@ db/
 scripts/scrape.ts                    # CLI
 ```
 
-## Firmen-Status (Phase 1)
+## Firmen-Status (14 Zielunternehmen)
 
-| Status | Firma | Portal | Notiz |
+| Status | Firma | Portal | Endpoint |
 |---|---|---|---|
 | ✅ | Airbus | Workday | `ag.wd3.myworkdayjobs.com/Airbus` |
-| ✅ | Quantum Systems | Personio | |
-| ✅ | Franka Robotics | Personio | |
-| ✅ | Synaos | Personio | meist Hannover, manchmal München |
-| ✅ | Neura Robotics | Personio | meist BW, prüfen |
-| ✅ | IABG | HTML | Ottobrunn |
-| ✅ | Siemens | Phenom People JSON | |
-| ⚠️ | Infineon | Workday | Tenant-Variante prüfen |
-| ⚠️ | Hensoldt | Workday | |
-| ⚠️ | MTU | SuccessFactors | HTML-Fallback |
-| ⚠️ | MAN | SuccessFactors | HTML-Fallback |
-| ⚠️ | Diehl | SuccessFactors | HTML-Fallback |
-| ⚠️ | Magazino | Personio | evtl. eingestellt seit Jungheinrich |
-| ⚠️ | Agile Robots SE | Personio | Slug `agilerobots` |
-| ⚠️ | Rohde & Schwarz | HTML-Fallback | JSON-Endpoint instabil |
-| ❌ | KNDS | — | Karriereportal benötigt JS-Rendering |
-| ❌ | Atlas Robotics | — | sehr klein |
-| ❌ | Locus Robotics | — | US-Firma, kein DE-Büro München |
-| ❌ | Keenon Robotics | — | EU-HQ Düsseldorf |
-| ❌ | Faulhaber | — | HQ Schönaich BW |
-| ❌ | Dreher Automation | — | klein, kein Online-Portal |
+| ✅ | Hensoldt | Workday | `hensoldt.wd3.myworkdayjobs.com/External_Career_Site` |
+| ✅ | Agile Robots SE | Personio | `agile-robots-se.jobs.personio.de` |
+| ✅ | Franka Robotics | Personio | `franka-robotics.jobs.personio.de` |
+| ✅ | Siemens | Phenom People | `jobs.siemens.com/api/jobs` |
+| ✅ | IABG | HTML | `iabg.de/karriere/stellenangebote` (HQ Ottobrunn) |
+| ⚠️ | Quantum Systems | Personio→HTML | versucht Personio-Slug `quantum-systems`, fällt auf `career.quantum-systems.com` zurück |
+| ⚠️ | Neura Robotics | talentsconnect | `jobs.neura-robotics.com` |
+| ⚠️ | Infineon | Workday→HTML | `infineon` Workday-Tenant, sonst HTML-Suche |
+| ⚠️ | KNDS | HTML | `jobs.knds.de` |
+| ⚠️ | Rohde & Schwarz | HTML | `rohde-schwarz.com` (AEM, kein offenes JSON) |
+| ⚠️ | Diehl | HTML | `diehl.com/career` (Plattform unklar) |
+| ⚠️ | MTU | HTML | `mtu.de/careers/online-job-market` |
+| ⚠️ | MAN | HTML | `jobs.man.eu` |
 
-❌-Firmen werden trotzdem in der DB geführt – als „link-only"-Eintrag, der zur Karriereseite zeigt.
+⚠️-Scraper: bei Misserfolg wird automatisch ein „link-only"-Eintrag erzeugt, damit die Firma sichtbar bleibt.
 
 ## „Neu seit letztem Import"
 

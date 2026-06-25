@@ -1,10 +1,11 @@
 /**
- * Registry of all 21 target companies with their known careers URLs and the
- * portal technology used (where known). Per-company scraper functions live
- * below. Status legend:
- *   ✅ working scraper – returns structured jobs
- *   ⚠️ partial – list-only, no description extraction, or fragile
- *   ❌ link-only – just provides a single "see careers page" entry
+ * Registry der 14 Zielunternehmen mit echten Karriere-Portalen.
+ * Stand der Recherche: aktualisiert nach Web-Suche.
+ *
+ * Status-Legende:
+ *   ✅ working scraper – verifizierte Endpoints
+ *   ⚠️ best-effort – Tenant/Selector geraten, kann Anpassung brauchen
+ *   ❌ link-only – kein automatischer Scraper möglich
  */
 
 import type { JobInput } from '../lib/db';
@@ -12,9 +13,8 @@ import type { Scraper, ScrapeResult } from './base';
 import { hashJob } from './base';
 import { scrapeWorkday } from './portals/workday';
 import { scrapePersonio } from './portals/personio';
-import { scrapeSuccessFactorsHtml, enrichWithHtmlDescription } from './portals/successfactors';
-
-type Maybe<T> = T | null;
+import { scrapeGenericHtml } from './portals/genericHtml';
+import { scrapeTalentsConnect } from './portals/talentsconnect';
 
 export interface CompanyMeta {
   name: string;
@@ -25,30 +25,22 @@ export interface CompanyMeta {
 }
 
 export const COMPANIES: CompanyMeta[] = [
-  { name: 'KNDS',            careersUrl: 'https://www.knds.com/career/',                              portal: 'custom',         status: '❌', note: 'KNDS Deutschland (München, Krauss-Maffei) – Karriereportal benötigt JS-Rendering' },
-  { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html', portal: 'custom',  status: '⚠️', note: 'Eigene Suche, JSON-Endpoint stark verändert sich – HTML-Fallback' },
-  { name: 'IABG',            careersUrl: 'https://www.iabg.de/karriere/stellenangebote/',             portal: 'custom',         status: '✅', note: 'HTML-Liste, einfach' },
-  { name: 'Agile Robots SE', careersUrl: 'https://www.agile-robots.com/en/careers',                   portal: 'personio',       status: '⚠️', note: 'Tenant-Slug "agilerobots" probieren' },
-  { name: 'Hensoldt',        careersUrl: 'https://www.hensoldt.net/karriere/jobs/',                   portal: 'successfactors', status: '⚠️', note: 'SAP SF – HTML-Parsing' },
-  { name: 'Diehl',           careersUrl: 'https://www.diehl.com/group/de/karriere/',                  portal: 'successfactors', status: '⚠️' },
-  { name: 'Infineon',        careersUrl: 'https://www.infineon.com/cms/en/careers/jobsearch/',        portal: 'workday',        status: '⚠️', note: 'wd3, tenant=infineon' },
-  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/careers',                          portal: 'custom',         status: '⚠️', note: 'Phenom People – eigene JSON-Suche' },
-  { name: 'MTU',             careersUrl: 'https://www.mtu.de/de/karriere/jobsuche/',                  portal: 'successfactors', status: '⚠️' },
-  { name: 'MAN',             careersUrl: 'https://www.mantruckandbus.com/de/karriere.html',           portal: 'successfactors', status: '⚠️' },
-  { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',                   portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
-  { name: 'Quantum Systems', careersUrl: 'https://quantum-systems.jobs.personio.de/',                 portal: 'personio',       status: '✅' },
-  { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',                 portal: 'personio',       status: '✅', note: 'früher Franka Emika' },
-  { name: 'Magazino',        careersUrl: 'https://magazino.jobs.personio.de/',                        portal: 'personio',       status: '⚠️', note: 'Magazino wurde von Jungheinrich aufgenommen – ggf. eingestellt' },
-  { name: 'Neura Robotics',  careersUrl: 'https://neura-robotics.jobs.personio.de/',                  portal: 'personio',       status: '✅', note: 'HQ Metzingen, BW – wenig München, aber prüfen' },
-  { name: 'Atlas Robotics',  careersUrl: 'https://atlas-robotics.com/karriere/',                      portal: 'custom',         status: '❌', note: 'Sehr klein, evtl. keine Stellen online' },
-  { name: 'Locus Robotics',  careersUrl: 'https://locusrobotics.com/careers/',                        portal: 'greenhouse',     status: '❌', note: 'US-Firma, kein DE-Büro München' },
-  { name: 'Keenon Robotics', careersUrl: 'https://www.keenon.com/de/Career.html',                     portal: 'custom',         status: '❌', note: 'EU-HQ Düsseldorf, kein München' },
-  { name: 'Synaos',          careersUrl: 'https://synaos.jobs.personio.de/',                          portal: 'personio',       status: '✅', note: 'HQ Hannover, manchmal München' },
-  { name: 'Faulhaber',       careersUrl: 'https://www.faulhaber.com/de/karriere/offene-stellen/',     portal: 'custom',         status: '❌', note: 'HQ Schönaich BW, kein München' },
-  { name: 'Dreher Automation', careersUrl: 'https://www.dreher-automation.de/karriere/',              portal: 'custom',         status: '❌', note: 'Klein, Karriere meist Aushang' },
+  { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'phenom/own',     status: '⚠️', note: 'Eigenes Portal jobs.knds.de – Phenom-ähnlich. HTML-Fallback.' },
+  { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html', portal: 'AEM-custom',     status: '⚠️', note: 'Eigene AEM-Seite, kein offenes JSON. HTML-Fallback.' },
+  { name: 'IABG',            careersUrl: 'https://www.iabg.de/karriere/stellenangebote',         portal: 'html',           status: '✅', note: 'HQ Ottobrunn – HTML einfach.' },
+  { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
+  { name: 'Hensoldt',        careersUrl: 'https://hensoldt.wd3.myworkdayjobs.com/External_Career_Site', portal: 'workday', status: '✅', note: 'wd3, tenant=hensoldt, site=External_Career_Site' },
+  { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
+  { name: 'Infineon',        careersUrl: 'https://jobs.infineon.com/careers',                    portal: 'custom',         status: '⚠️', note: 'jobs.infineon.com – probiert mehrere API-Varianten' },
+  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
+  { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '⚠️', note: 'MTU Aero Engines – HTML-Liste' },
+  { name: 'MAN',             careersUrl: 'https://jobs.man.eu/',                                 portal: 'html',           status: '⚠️', note: 'MAN Truck & Bus – HTML' },
+  { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
+  { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
+  { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
+  { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/',                     portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
 ];
 
-/** Convenience: build a single "❌ link-only" job for companies without working scraper. */
 function linkOnly(meta: CompanyMeta): JobInput {
   const job: JobInput = {
     company: meta.name,
@@ -56,7 +48,7 @@ function linkOnly(meta: CompanyMeta): JobInput {
     location: 'München (zu prüfen)',
     url: meta.careersUrl,
     source_portal: 'link-only',
-    description_raw: meta.note ?? 'Kein automatischer Scraper verfügbar – bitte Karriereseite manuell prüfen.',
+    description_raw: meta.note ?? 'Kein automatischer Scraper verfügbar.',
     tasks: null,
     qualifications: null,
   };
@@ -70,132 +62,54 @@ async function scrapeAirbus(): Promise<JobInput[]> {
   return scrapeWorkday({ company: 'Airbus', tenant: 'ag', wd: 3, site: 'Airbus' }, true);
 }
 
+async function scrapeHensoldt(): Promise<JobInput[]> {
+  return scrapeWorkday({ company: 'Hensoldt', tenant: 'hensoldt', wd: 3, site: 'External_Career_Site' }, true);
+}
+
+async function scrapeAgileRobots(): Promise<JobInput[]> {
+  return scrapePersonio({ company: 'Agile Robots SE', tenant: 'agile-robots-se', tld: 'de' });
+}
+
+async function scrapeFranka(): Promise<JobInput[]> {
+  return scrapePersonio({ company: 'Franka Robotics', tenant: 'franka-robotics', tld: 'de' });
+}
+
+async function scrapeQuantum(): Promise<JobInput[]> {
+  // Erst Personio-Slug probieren, dann HTML-Fallback auf eigene Domain.
+  try {
+    return await scrapePersonio({ company: 'Quantum Systems', tenant: 'quantum-systems', tld: 'de' });
+  } catch {
+    return scrapeGenericHtml({
+      company: 'Quantum Systems',
+      listingUrl: 'https://career.quantum-systems.com/',
+      hrefPattern: /(job|offer|position|stelle)/i,
+      defaultLocation: 'Gilching',
+      sourcePortal: 'qs-html',
+    });
+  }
+}
+
 async function scrapeInfineon(): Promise<JobInput[]> {
-  // Infineon uses Workday under jobs.infineon.com.
+  // Infineon nutzt ein eigenes System auf jobs.infineon.com. Wir probieren
+  // zuerst die typische Workday-CXS-Variante, dann eine REST-Suche.
   try {
     return await scrapeWorkday({ company: 'Infineon', tenant: 'infineon', wd: 3, site: 'Infineon' }, true);
   } catch {
-    return await scrapeWorkday({ company: 'Infineon', tenant: 'infineon', wd: 5, site: 'Infineon_External' }, true);
+    return scrapeGenericHtml({
+      company: 'Infineon',
+      listingUrl: 'https://www.infineon.com/cms/en/careers/jobsearch/jobsearch/?searchLocation=Munich',
+      hrefPattern: /(job|jobs?\/details|position)/i,
+      defaultLocation: 'München',
+      sourcePortal: 'infineon-html',
+    });
   }
-}
-
-async function scrapePersonioCo(name: string, tenant: string, tld: 'de' | 'com' = 'de'): Promise<JobInput[]> {
-  try { return await scrapePersonio({ company: name, tenant, tld }); }
-  catch (e) {
-    // try opposite TLD as fallback
-    return await scrapePersonio({ company: name, tenant, tld: tld === 'de' ? 'com' : 'de' });
-  }
-}
-
-async function scrapeIABG(): Promise<JobInput[]> {
-  // IABG has a simple HTML list at /karriere/stellenangebote/
-  const { fetchText } = await import('./base');
-  const cheerio = await import('cheerio');
-  const url = 'https://www.iabg.de/karriere/stellenangebote/';
-  const html = await fetchText(url);
-  const $ = cheerio.load(html);
-  const out: JobInput[] = [];
-  $('a').each((_, a) => {
-    const $a = $(a);
-    const href = $a.attr('href');
-    const text = $a.text().trim();
-    if (!href || !text) return;
-    if (!/stellenangebot|jobs?\/|karriere\//i.test(href)) return;
-    if (text.length < 10 || text.length > 200) return;
-    const ctx = $a.closest('tr,li,div,article').text();
-    const { isMunichArea } = require('./base');
-    if (!isMunichArea(ctx) && !isMunichArea(text)) return;
-    const full = href.startsWith('http') ? href : new URL(href, url).toString();
-    const job: JobInput = {
-      company: 'IABG',
-      title: text,
-      location: /münchen|ottobrunn|taufkirchen/i.exec(ctx)?.[0] ?? 'Ottobrunn',
-      url: full,
-      source_portal: 'iabg-html',
-    };
-    job.hash = hashJob(job);
-    out.push(job);
-  });
-  // Deduplicate by URL
-  const seen = new Set<string>();
-  return out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
-}
-
-async function scrapeHensoldt(): Promise<JobInput[]> {
-  return scrapeSuccessFactorsHtml({
-    company: 'Hensoldt',
-    searchUrl: 'https://hensoldt.wd3.myworkdayjobs.com/Hensoldt',
-    baseUrl: 'https://hensoldt.wd3.myworkdayjobs.com/',
-  }).catch(async () => {
-    // Hensoldt is actually on Workday — try that:
-    return scrapeWorkday({ company: 'Hensoldt', tenant: 'hensoldt', wd: 3, site: 'Hensoldt' });
-  });
-}
-
-async function scrapeMTU(): Promise<JobInput[]> {
-  // MTU uses SAP SF careers under mtu.epost-easycruit or career5.successfactors.eu
-  return scrapeSuccessFactorsHtml({
-    company: 'MTU',
-    searchUrl: 'https://career5.successfactors.eu/career?company=MTUAERO',
-    baseUrl: 'https://career5.successfactors.eu/',
-  });
-}
-
-async function scrapeMAN(): Promise<JobInput[]> {
-  return scrapeSuccessFactorsHtml({
-    company: 'MAN',
-    searchUrl: 'https://career012.successfactors.eu/careers?company=mantruckanZ',
-    baseUrl: 'https://career012.successfactors.eu/',
-  });
-}
-
-async function scrapeDiehl(): Promise<JobInput[]> {
-  return scrapeSuccessFactorsHtml({
-    company: 'Diehl',
-    searchUrl: 'https://career5.successfactors.eu/career?company=DiehlStif',
-    baseUrl: 'https://career5.successfactors.eu/',
-  });
-}
-
-async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // R&S has its own JSON endpoint that frequently changes. Fall back to HTML list scraping.
-  const { fetchText, isMunichArea } = await import('./base');
-  const cheerio = await import('cheerio');
-  const url = 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html';
-  const html = await fetchText(url);
-  const $ = cheerio.load(html);
-  const out: JobInput[] = [];
-  $('a').each((_, a) => {
-    const $a = $(a);
-    const href = $a.attr('href');
-    const text = $a.text().trim();
-    if (!href || !text) return;
-    if (!/jobs?\/|stelle|career/i.test(href)) return;
-    if (text.length < 10 || text.length > 200) return;
-    const ctx = $a.closest('article,li,div').text();
-    if (!isMunichArea(ctx) && !isMunichArea(text)) return;
-    const full = href.startsWith('http') ? href : new URL(href, url).toString();
-    const job: JobInput = {
-      company: 'Rohde & Schwarz',
-      title: text,
-      location: 'München',
-      url: full,
-      source_portal: 'rohde-html',
-    };
-    job.hash = hashJob(job);
-    out.push(job);
-  });
-  const seen = new Set<string>();
-  return out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
 }
 
 async function scrapeSiemens(): Promise<JobInput[]> {
-  // Siemens uses Phenom People. Public search JSON:
-  // https://jobs.siemens.com/api/jobs?keyword=&location=Munich&country=Germany&radius=30&num=100
   const url = 'https://jobs.siemens.com/api/jobs?keyword=&location=Munich%2C+Germany&radius=30&num=100&pid=&offset=0&filter=&Codes=';
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error('Siemens HTTP ' + res.status);
-  const data = (await res.json()) as { jobs?: { data?: any }[]; refineSearch?: unknown };
+  const data = (await res.json()) as { jobs?: { data?: any }[] };
   const arr = data.jobs ?? [];
   const out: JobInput[] = [];
   for (const item of arr) {
@@ -218,31 +132,91 @@ async function scrapeSiemens(): Promise<JobInput[]> {
   return out;
 }
 
+async function scrapeKNDS(): Promise<JobInput[]> {
+  // KNDS jobs.knds.de – versuche zuerst HTML, dann Phenom-ähnliche API.
+  return scrapeGenericHtml({
+    company: 'KNDS',
+    listingUrl: 'https://jobs.knds.de/viewalljobs/content/search/?locale=de_DE&q=&location=M%C3%BCnchen',
+    hrefPattern: /\/job\/|\/career\/|\/stelle\/|jobs?\/[a-z]/i,
+    defaultLocation: 'München',
+    sourcePortal: 'knds-html',
+  });
+}
+
+async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
+  return scrapeGenericHtml({
+    company: 'Rohde & Schwarz',
+    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html',
+    hrefPattern: /(stellen|job|career)\/.+\.html$/i,
+    defaultLocation: 'München',
+    sourcePortal: 'rohde-html',
+  });
+}
+
+async function scrapeIABG(): Promise<JobInput[]> {
+  return scrapeGenericHtml({
+    company: 'IABG',
+    listingUrl: 'https://www.iabg.de/karriere/stellenangebote',
+    hrefPattern: /(stellenangebot|jobs?\/|karriere\/).+/i,
+    defaultLocation: 'Ottobrunn',
+    sourcePortal: 'iabg-html',
+  });
+}
+
+async function scrapeDiehl(): Promise<JobInput[]> {
+  return scrapeGenericHtml({
+    company: 'Diehl',
+    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',
+    hrefPattern: /(stelle|job|position|offer)/i,
+    defaultLocation: 'München',
+    sourcePortal: 'diehl-html',
+  });
+}
+
+async function scrapeMTU(): Promise<JobInput[]> {
+  return scrapeGenericHtml({
+    company: 'MTU',
+    listingUrl: 'https://www.mtu.de/careers/online-job-market/',
+    hrefPattern: /(job|jobboerse|stelle|career)/i,
+    defaultLocation: 'München',
+    sourcePortal: 'mtu-html',
+  });
+}
+
+async function scrapeMAN(): Promise<JobInput[]> {
+  return scrapeGenericHtml({
+    company: 'MAN',
+    listingUrl: 'https://jobs.man.eu/?locale=de_DE&location=M%C3%BCnchen',
+    hrefPattern: /(job|stelle|position|career)/i,
+    defaultLocation: 'München',
+    sourcePortal: 'man-html',
+  });
+}
+
+async function scrapeNeura(): Promise<JobInput[]> {
+  return scrapeTalentsConnect({
+    company: 'Neura Robotics',
+    baseUrl: 'https://jobs.neura-robotics.com',
+  });
+}
+
 /* ---------------- Public registry ---------------- */
 
 export const scrapers: Scraper[] = [
   { company: 'Airbus',          run: wrap('Airbus',          scrapeAirbus) },
-  { company: 'Infineon',        run: wrap('Infineon',        scrapeInfineon) },
-  { company: 'Quantum Systems', run: wrap('Quantum Systems', () => scrapePersonioCo('Quantum Systems', 'quantum-systems')) },
-  { company: 'Franka Robotics', run: wrap('Franka Robotics', () => scrapePersonioCo('Franka Robotics', 'franka-robotics')) },
-  { company: 'Magazino',        run: wrap('Magazino',        () => scrapePersonioCo('Magazino', 'magazino')) },
-  { company: 'Neura Robotics',  run: wrap('Neura Robotics',  () => scrapePersonioCo('Neura Robotics', 'neura-robotics')) },
-  { company: 'Agile Robots SE', run: wrap('Agile Robots SE', () => scrapePersonioCo('Agile Robots SE', 'agilerobots')) },
-  { company: 'Synaos',          run: wrap('Synaos',          () => scrapePersonioCo('Synaos', 'synaos')) },
-  { company: 'IABG',            run: wrap('IABG',            scrapeIABG) },
   { company: 'Hensoldt',        run: wrap('Hensoldt',        scrapeHensoldt) },
+  { company: 'Agile Robots SE', run: wrap('Agile Robots SE', scrapeAgileRobots) },
+  { company: 'Franka Robotics', run: wrap('Franka Robotics', scrapeFranka) },
+  { company: 'Quantum Systems', run: wrap('Quantum Systems', scrapeQuantum) },
+  { company: 'Neura Robotics',  run: wrap('Neura Robotics',  scrapeNeura) },
+  { company: 'Infineon',        run: wrap('Infineon',        scrapeInfineon) },
+  { company: 'Siemens',         run: wrap('Siemens',         scrapeSiemens) },
+  { company: 'KNDS',            run: wrap('KNDS',            scrapeKNDS) },
+  { company: 'Rohde & Schwarz', run: wrap('Rohde & Schwarz', scrapeRohdeSchwarz) },
+  { company: 'IABG',            run: wrap('IABG',            scrapeIABG) },
+  { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
   { company: 'MAN',             run: wrap('MAN',             scrapeMAN) },
-  { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
-  { company: 'Rohde & Schwarz', run: wrap('Rohde & Schwarz', scrapeRohdeSchwarz) },
-  { company: 'Siemens',         run: wrap('Siemens',         scrapeSiemens) },
-  // Link-only fallbacks:
-  { company: 'KNDS',              run: linkOnlyRunner('KNDS') },
-  { company: 'Atlas Robotics',    run: linkOnlyRunner('Atlas Robotics') },
-  { company: 'Locus Robotics',    run: linkOnlyRunner('Locus Robotics') },
-  { company: 'Keenon Robotics',   run: linkOnlyRunner('Keenon Robotics') },
-  { company: 'Faulhaber',         run: linkOnlyRunner('Faulhaber') },
-  { company: 'Dreher Automation', run: linkOnlyRunner('Dreher Automation') },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {
@@ -252,17 +226,9 @@ function wrap(company: string, fn: () => Promise<JobInput[]>) {
       return { jobs, status: jobs.length ? 'ok' : 'partial' };
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
-      // graceful: emit a single link-only marker so user still sees the company
       const meta = COMPANIES.find(c => c.name === company);
       const fallback = meta ? [linkOnly(meta)] : [];
       return { jobs: fallback, status: 'fail', error: err };
     }
-  };
-}
-
-function linkOnlyRunner(company: string) {
-  return async (): Promise<ScrapeResult> => {
-    const meta = COMPANIES.find(c => c.name === company);
-    return { jobs: meta ? [linkOnly(meta)] : [], status: 'partial' };
   };
 }
