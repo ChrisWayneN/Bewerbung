@@ -8,9 +8,10 @@
  *   ❌ link-only – kein automatischer Scraper möglich
  */
 
+import * as cheerio from 'cheerio';
 import type { JobInput } from '../lib/db';
 import type { Scraper, ScrapeResult } from './base';
-import { hashJob } from './base';
+import { hashJob, isMunichArea, fetchText } from './base';
 import { scrapeWorkday } from './portals/workday';
 import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
@@ -144,12 +145,49 @@ async function scrapeSiemens(): Promise<JobInput[]> {
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
-  // KNDS nutzt SAP SuccessFactors Career Site Builder.
-  // Verifiziert: https://jobs.knds.de/content/search/?locale=de_DE&currentPage=1&pageSize=6
-  return scrapeSapCSB({
-    company: 'KNDS',
-    baseUrl: 'https://jobs.knds.de',
-  });
+  // Custom System (recruiting-solutions.org). Verifizierte DOM-Struktur:
+  //   <a class="search-item-wrapper" href=".../job-invite/{id}/...">
+  //     <h3 class="title">...</h3>
+  //     <div class="locations">München</div>
+  //   </a>
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  const pageSize = 100;
+
+  for (let page = 1; page <= 20; page++) {
+    const url = `https://jobs.knds.de/content/search/?locale=de_DE&currentPage=${page}&pageSize=${pageSize}`;
+    const html = await fetchText(url);
+    const $ = cheerio.load(html);
+    const items = $('a.search-item-wrapper');
+    if (!items.length) break;
+
+    let added = 0;
+    items.each((_, a) => {
+      const $a = $(a);
+      const href = $a.attr('href');
+      const title = $a.find('h3.title, .title').first().text().trim().replace(/\s+/g, ' ');
+      const location = $a.find('div.locations, .locations').first().text().trim().replace(/\s+/g, ' ');
+      if (!href || !title) return;
+      if (!isMunichArea(location)) return;
+      const fullUrl = href.startsWith('http') ? href : new URL(href, 'https://jobs.knds.de').toString();
+      if (seen.has(fullUrl)) return;
+      seen.add(fullUrl);
+      const job: JobInput = {
+        company: 'KNDS',
+        title,
+        location,
+        url: fullUrl,
+        source_portal: 'knds-rs',
+      };
+      job.hash = hashJob(job);
+      out.push(job);
+      added++;
+    });
+
+    if (items.length < pageSize) break;
+    if (added === 0 && page > 1) break;
+  }
+  return out;
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
