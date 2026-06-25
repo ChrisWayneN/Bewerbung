@@ -40,42 +40,62 @@ export interface WorkdayConfig {
 
 export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Promise<JobInput[]> {
   const base = `https://${cfg.tenant}.wd${cfg.wd}.myworkdayjobs.com`;
-  const listUrl = `${base}/wday/cxs/${cfg.tenant}/${cfg.site}/jobs`;
+  // Manche Tenants brauchen einen Locale-Pfad. Wir probieren site-as-is und
+  // gängige Locale-Varianten falls die einfache fehlschlägt.
+  const siteCandidates = Array.from(new Set([
+    cfg.site,
+    `en-US/${cfg.site}`,
+    `de-DE/${cfg.site}`,
+  ]));
   const out: JobInput[] = [];
   const limit = cfg.pageSize ?? 20;
   let offset = 0;
   let total = Infinity;
+  let listUrl = `${base}/wday/cxs/${cfg.tenant}/${cfg.site}/jobs`;
+  let workingSite = cfg.site;
+  let firstCall = true;
 
   while (offset < total) {
-    // Manche Tenants (z. B. Hensoldt) lehnen die einfache Variante mit HTTP 422 ab.
-    // Wir probieren mehrere Body-Varianten in dieser Reihenfolge.
     const bodies: object[] = [
       { appliedFacets: {}, limit, offset, searchText: cfg.searchText ?? '' },
+      { appliedFacets: { locations: [], jobFamilyGroup: [] }, limit, offset, searchText: cfg.searchText ?? '' },
       { limit, offset, searchText: cfg.searchText ?? '' },
       { appliedFacets: {}, limit, offset },
       { limit, offset },
     ];
     let data: WorkdayList | null = null;
     let lastStatus = 0;
-    for (const body of bodies) {
-      const res = await fetch(listUrl, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-          referer: `${base}/${cfg.site}`,
-        },
-        body: JSON.stringify(body),
-      });
-      lastStatus = res.status;
-      if (res.ok) {
-        data = (await res.json()) as WorkdayList;
-        break;
+
+    // Beim ersten Call: probiere alle siteCandidates mit allen bodies bis was klappt.
+    // Danach: behalte den funktionierenden listUrl bei.
+    const sitesToTry = firstCall ? siteCandidates : [workingSite];
+
+    outer: for (const site of sitesToTry) {
+      const url = `${base}/wday/cxs/${cfg.tenant}/${site}/jobs`;
+      for (const body of bodies) {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            accept: 'application/json',
+            'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            referer: `${base}/${site}`,
+            origin: base,
+          },
+          body: JSON.stringify(body),
+        });
+        lastStatus = res.status;
+        if (res.ok) {
+          data = (await res.json()) as WorkdayList;
+          workingSite = site;
+          listUrl = url;
+          firstCall = false;
+          break outer;
+        }
       }
     }
-    if (!data) throw new Error(`Workday list HTTP ${lastStatus} (${cfg.company})`);
+    if (!data) throw new Error(`Workday list HTTP ${lastStatus} (${cfg.company}) – Body- und Site-Varianten erschöpft. Tenant/Site per DevTools verifizieren.`);
     total = data.total ?? 0;
     if (!data.jobPostings?.length) break;
 
@@ -111,7 +131,7 @@ export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Pr
 
       if (fetchDetails) {
         try {
-          const detailUrl = `${base}/wday/cxs/${cfg.tenant}/${cfg.site}${jp.externalPath}`;
+          const detailUrl = `${base}/wday/cxs/${cfg.tenant}/${workingSite}${jp.externalPath}`;
           const dres = await fetch(detailUrl, { headers: { accept: 'application/json' } });
           if (dres.ok) {
             const detail = (await dres.json()) as WorkdayDetail;

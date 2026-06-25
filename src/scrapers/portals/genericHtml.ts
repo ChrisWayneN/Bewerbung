@@ -31,16 +31,27 @@ export async function scrapeGenericHtml(cfg: GenericHtmlConfig): Promise<JobInpu
   const minLen = cfg.minTitleLen ?? 10;
   const maxLen = cfg.maxTitleLen ?? 200;
 
+  let totalAnchors = 0;
+  let hrefMatched = 0;
+  let titleOk = 0;
+  let locationOk = 0;
+  const samplePatternMatches: string[] = [];
+
   $('a').each((_, a) => {
+    totalAnchors++;
     const $a = $(a);
     const href = $a.attr('href');
     if (!href) return;
     if (!cfg.hrefPattern.test(href)) return;
+    hrefMatched++;
+    if (samplePatternMatches.length < 5) samplePatternMatches.push(href);
     const title = $a.text().trim().replace(/\s+/g, ' ');
     if (title.length < minLen || title.length > maxLen) return;
+    titleOk++;
     const ctx = $a.closest('article, li, div, tr').text();
     const matchedArea = isMunichArea(ctx) || isMunichArea(title);
     if (!cfg.assumeLocation && !matchedArea) return;
+    locationOk++;
     const url = href.startsWith('http') ? href : new URL(href, cfg.listingUrl).toString();
     const job: JobInput = {
       company: cfg.company,
@@ -54,7 +65,23 @@ export async function scrapeGenericHtml(cfg: GenericHtmlConfig): Promise<JobInpu
   });
 
   const seen = new Set<string>();
-  return out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+  const deduped = out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+
+  if (deduped.length === 0) {
+    console.log(`  [debug ${cfg.company}] genericHtml 0 Treffer:`);
+    console.log(`    HTML ${html.length} bytes · ${totalAnchors} <a>-Tags · ${hrefMatched} matchen hrefPattern · ${titleOk} mit Titel-Länge · ${locationOk} mit Munich-Match`);
+    if (samplePatternMatches.length) {
+      console.log(`    Sample hrefs (pattern-match):`);
+      samplePatternMatches.forEach(h => console.log(`      ${h}`));
+    } else {
+      const anyHrefs: string[] = [];
+      $('a[href]').each((_, a) => { if (anyHrefs.length < 5) anyHrefs.push($(a).attr('href') || ''); });
+      console.log(`    Keine href matched pattern ${cfg.hrefPattern}. Erste hrefs:`);
+      anyHrefs.forEach(h => console.log(`      ${h}`));
+    }
+  }
+
+  return deduped;
 }
 
 /** Reichert einen Job mit Description + extrahierten Sections an. */

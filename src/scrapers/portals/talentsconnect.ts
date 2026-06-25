@@ -23,7 +23,15 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
   //     <span class="h3">Titel</span>
   //     <span class="p cityNames">Munich</span>
   //   </a>
+  let anchorsTotal = 0;
+  let withOffer = 0;
+  let withTitle = 0;
+  let withMunich = 0;
+  const sampleLocations: string[] = [];
+
   $('a[data-type="offer"], a[href*="/offer/"]').each((_, a) => {
+    anchorsTotal++;
+    withOffer++;
     const $a = $(a);
     const href = $a.attr('href');
     if (!href) return;
@@ -31,7 +39,10 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
     const title = ($a.find('.h3, h3').first().text() || $a.find('h2').text() || '').trim().replace(/\s+/g, ' ');
     const location = ($a.find('.cityNames, [class*="city"], [class*="location"]').first().text() || '').trim().replace(/\s+/g, ' ');
     if (!title) return;
+    withTitle++;
+    if (sampleLocations.length < 5) sampleLocations.push(`${title} → "${location}"`);
     if (!isMunichArea(location)) return;
+    withMunich++;
     const job: JobInput = {
       company: cfg.company,
       title,
@@ -44,7 +55,20 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
   });
 
   const seen = new Set<string>();
-  return out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+  const deduped = out.filter(j => (seen.has(j.url) ? false : (seen.add(j.url), true)));
+
+  if (deduped.length === 0) {
+    console.log(`  [debug ${cfg.company}] talentsconnect 0 Treffer:`);
+    console.log(`    HTML ${html.length} bytes · ${withOffer} offer-Anchors · ${withTitle} mit Titel · ${withMunich} mit Munich-Match`);
+    if (sampleLocations.length) {
+      console.log(`    Sample-Einträge (alle Standorte, vor Munich-Filter):`);
+      sampleLocations.forEach(s => console.log(`      ${s}`));
+    } else {
+      console.log(`    Keine Anchors mit a[data-type="offer"] gefunden – DOM-Struktur vermutlich geändert.`);
+    }
+  }
+
+  return deduped;
 }
 
 /** Reichert einen einzelnen Job mit Description + extrahierten Sections an. */

@@ -47,6 +47,11 @@ export async function scrapeEightfold(cfg: EightfoldConfig): Promise<JobInput[]>
   const out: JobInput[] = [];
   const seen = new Set<string>();
 
+  // Manche Tenants verlangen den domain-Param. Wir leiten ihn aus baseUrl ab,
+  // wenn nicht explizit gesetzt: 'jobs.infineon.com' → 'infineon.com'.
+  const derivedDomain = cfg.domain
+    ?? baseUrl.replace(/^https?:\/\//, '').replace(/^jobs\./, '').replace(/\/.*$/, '');
+
   for (let page = 0; page < maxPages; page++) {
     const params = new URLSearchParams({
       start: String(page * pageSize),
@@ -55,7 +60,7 @@ export async function scrapeEightfold(cfg: EightfoldConfig): Promise<JobInput[]>
       radius: String(cfg.radiusKm ?? 50),
       sort_by: 'distance',
     });
-    if (cfg.domain) params.set('domain', cfg.domain);
+    if (derivedDomain) params.set('domain', derivedDomain);
     if (cfg.pid) params.set('pid', cfg.pid);
 
     const url = `${baseUrl}/api/apply/v2/jobs?${params.toString()}`;
@@ -63,10 +68,61 @@ export async function scrapeEightfold(cfg: EightfoldConfig): Promise<JobInput[]>
       headers: {
         accept: 'application/json, text/plain, */*',
         'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         referer: `${baseUrl}/careers`,
+        origin: baseUrl,
+        'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
       },
     });
+    if (res.status === 403) {
+      // Fallback: ohne pid (manchmal blockt der gerade pid)
+      if (cfg.pid) {
+        const p2 = new URLSearchParams(params);
+        p2.delete('pid');
+        const url2 = `${baseUrl}/api/apply/v2/jobs?${p2.toString()}`;
+        const res2 = await fetch(url2, {
+          headers: {
+            accept: 'application/json, text/plain, */*',
+            'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            referer: `${baseUrl}/careers`,
+            origin: baseUrl,
+          },
+        });
+        if (res2.ok) {
+          const data2 = (await res2.json()) as EightfoldResponse;
+          const pos2 = data2.positions ?? [];
+          if (pos2.length) {
+            for (const p of pos2) {
+              const title = p.name ?? p.display_job_title;
+              const loc = p.display_location ?? p.location ?? '';
+              if (!isMunichArea(loc)) continue;
+              const detailUrl = p.canonicalPositionUrl ?? p.url ?? (p.id ? `${baseUrl}/careers/job/${p.id}` : null);
+              if (!title || !detailUrl) continue;
+              if (seen.has(detailUrl)) continue;
+              seen.add(detailUrl);
+              const job: JobInput = {
+                company: cfg.company,
+                title,
+                location: loc,
+                url: detailUrl,
+                source_portal: 'eightfold',
+                description_raw: p.job_description ?? null,
+              };
+              job.hash = hashJob(job);
+              out.push(job);
+            }
+            if (out.length) return out;
+          }
+        }
+      }
+      throw new Error(`Eightfold HTTP 403 (${cfg.company}) – Tenant blockt Bot-Anfragen, evtl. Playwright nötig`);
+    }
     if (!res.ok) throw new Error(`Eightfold HTTP ${res.status} (${cfg.company})`);
     const data = (await res.json()) as EightfoldResponse;
     const positions = data.positions ?? [];

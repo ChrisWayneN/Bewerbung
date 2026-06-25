@@ -78,17 +78,20 @@ async function scrapeFranka(): Promise<JobInput[]> {
 
 async function scrapeQuantum(): Promise<JobInput[]> {
   // Erst Personio-Slug probieren, dann HTML-Fallback auf eigene Domain.
+  // Personio liefert bei nicht-existentem Slug oft leeres XML → wir fallen
+  // bei 0 Treffern explizit auf den HTML-Pfad zurück.
   try {
-    return await scrapePersonio({ company: 'Quantum Systems', tenant: 'quantum-systems', tld: 'de' });
-  } catch {
-    return scrapeGenericHtml({
-      company: 'Quantum Systems',
-      listingUrl: 'https://career.quantum-systems.com/',
-      hrefPattern: /(job|offer|position|stelle)/i,
-      defaultLocation: 'Gilching',
-      sourcePortal: 'qs-html',
-    });
-  }
+    const personio = await scrapePersonio({ company: 'Quantum Systems', tenant: 'quantum-systems', tld: 'de' });
+    if (personio.length > 0) return personio;
+  } catch { /* fall through */ }
+  return scrapeGenericHtml({
+    company: 'Quantum Systems',
+    listingUrl: 'https://career.quantum-systems.com/',
+    hrefPattern: /\/(jobs?|offer|position|stelle|karriere|stellenangebote)\/[^"'\s?#]+/i,
+    defaultLocation: 'Gilching',
+    sourcePortal: 'qs-html',
+    minTitleLen: 5,
+  });
 }
 
 async function scrapeInfineon(): Promise<JobInput[]> {
@@ -103,16 +106,24 @@ async function scrapeInfineon(): Promise<JobInput[]> {
 }
 
 async function scrapeSiemens(): Promise<JobInput[]> {
-  // Siemens hat den /api/jobs-Endpoint umgebaut. Probiere mehrere bekannte
-  // Phenom-Endpoint-Varianten, dann HTML-Fallback.
+  // Siemens nutzt Phenom People. Wesentlicher Parameter: domain=siemens.com.
+  // Probiere mehrere bekannte Phenom-Endpoint-Varianten.
   const candidates = [
+    'https://jobs.siemens.com/api/jobs?domain=siemens.com&location=Munich%2C+Germany&locationName=Munich%2C+Germany&radius=30&num=100&start=0',
+    'https://jobs.siemens.com/api/jobs?domain=siemens.com&keyword=&location=Munich&radius=30&num=100',
+    'https://jobs.siemens.com/widgets?domain=siemens.com&ddoKey=refineSearch&location=Munich%2C+Germany&radius=30&num=100',
     'https://jobs.siemens.com/api/jobs?keyword=&location=Munich%2C+Germany&radius=30&num=100',
-    'https://jobs.siemens.com/widgets?ddoKey=refineSearch&location=Munich%2C+Germany&radius=30&num=100',
-    'https://jobs.siemens.com/careers?location=Munich%2C+Germany&radius=30&pid=&Codes=',
   ];
   for (const url of candidates) {
     try {
-      const res = await fetch(url, { headers: { accept: 'application/json' } });
+      const res = await fetch(url, {
+        headers: {
+          accept: 'application/json, text/plain, */*',
+          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          referer: 'https://jobs.siemens.com/careers',
+        },
+      });
       if (!res.ok) continue;
       const text = await res.text();
       // Versuche JSON, sonst skip
@@ -145,7 +156,7 @@ async function scrapeSiemens(): Promise<JobInput[]> {
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
-  // Custom System (recruiting-solutions.org). Verifizierte DOM-Struktur:
+  // Custom System (recruiting-solutions.org). Erwartete DOM-Struktur:
   //   <a class="search-item-wrapper" href=".../job-invite/{id}/...">
   //     <h3 class="title">...</h3>
   //     <div class="locations">München</div>
@@ -153,21 +164,29 @@ async function scrapeKNDS(): Promise<JobInput[]> {
   const out: JobInput[] = [];
   const seen = new Set<string>();
   const pageSize = 100;
+  let lastHtmlSize = 0;
+  let lastAnchorCount = 0;
+  const sampleLocations: string[] = [];
 
   for (let page = 1; page <= 20; page++) {
     const url = `https://jobs.knds.de/content/search/?locale=de_DE&currentPage=${page}&pageSize=${pageSize}`;
     const html = await fetchText(url);
+    lastHtmlSize = html.length;
     const $ = cheerio.load(html);
-    const items = $('a.search-item-wrapper');
+    let items = $('a.search-item-wrapper');
+    // Fallback-Selektoren falls Klasse umbenannt wurde.
+    if (!items.length) items = $('a[class*="search-item"], a[class*="job-item"], a[href*="/job-invite/"], a[href*="/job/"]');
+    lastAnchorCount = items.length;
     if (!items.length) break;
 
     let added = 0;
     items.each((_, a) => {
       const $a = $(a);
       const href = $a.attr('href');
-      const title = $a.find('h3.title, .title').first().text().trim().replace(/\s+/g, ' ');
-      const location = $a.find('div.locations, .locations').first().text().trim().replace(/\s+/g, ' ');
+      const title = ($a.find('h3.title, .title, h3, h2').first().text() || $a.text()).trim().replace(/\s+/g, ' ');
+      const location = $a.find('div.locations, .locations, [class*="location"], [class*="city"]').first().text().trim().replace(/\s+/g, ' ');
       if (!href || !title) return;
+      if (sampleLocations.length < 5) sampleLocations.push(`${title.slice(0, 60)} → "${location}"`);
       if (!isMunichArea(location)) return;
       const fullUrl = href.startsWith('http') ? href : new URL(href, 'https://jobs.knds.de').toString();
       if (seen.has(fullUrl)) return;
@@ -187,18 +206,44 @@ async function scrapeKNDS(): Promise<JobInput[]> {
     if (items.length < pageSize) break;
     if (added === 0 && page > 1) break;
   }
+
+  if (out.length === 0) {
+    console.log(`  [debug KNDS] 0 Treffer:`);
+    console.log(`    HTML ${lastHtmlSize} bytes · ${lastAnchorCount} job-Anchors gefunden`);
+    if (sampleLocations.length) {
+      console.log(`    Sample-Einträge (vor Munich-Filter):`);
+      sampleLocations.forEach(s => console.log(`      ${s}`));
+    } else {
+      console.log(`    Keine Anchors gematched – Selector oder Listing-URL veraltet.`);
+    }
+  }
+
   return out;
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // Die alte URL liefert 404. Aktuelle Karriere-Hauptseite + JSON-Suche probieren.
-  return scrapeGenericHtml({
-    company: 'Rohde & Schwarz',
-    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/karriere_207796.html',
-    hrefPattern: /\/karriere\/jobs?\/.+\.html$/i,
-    defaultLocation: 'München',
-    sourcePortal: 'rohde-html',
-  });
+  // Die alte 207796.html liefert 404. Aktuelle bekannte Listing-URLs probieren.
+  const candidates = [
+    'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html',
+    'https://www.rohde-schwarz.com/de/karriere/stellenangebote/stellenangebote_55440.html',
+    'https://www.rohde-schwarz.com/de/karriere/karriere_3692.html',
+    'https://www.rohde-schwarz.com/de/karriere/jobs/karriere_207796.html',
+  ];
+  let lastErr: unknown = null;
+  for (const url of candidates) {
+    try {
+      return await scrapeGenericHtml({
+        company: 'Rohde & Schwarz',
+        listingUrl: url,
+        hrefPattern: /\/karriere\/(jobs?|stellenangebote)\/.+\.html$/i,
+        defaultLocation: 'München',
+        sourcePortal: 'rohde-html',
+      });
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('R&S: alle Listing-URL-Kandidaten lieferten Fehler');
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
