@@ -59,7 +59,14 @@ export async function scrapeEightfold(cfg: EightfoldConfig): Promise<JobInput[]>
     if (cfg.pid) params.set('pid', cfg.pid);
 
     const url = `${baseUrl}/api/apply/v2/jobs?${params.toString()}`;
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    const res = await fetch(url, {
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        referer: `${baseUrl}/careers`,
+      },
+    });
     if (!res.ok) throw new Error(`Eightfold HTTP ${res.status} (${cfg.company})`);
     const data = (await res.json()) as EightfoldResponse;
     const positions = data.positions ?? [];

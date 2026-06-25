@@ -60,7 +60,13 @@ export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Pr
     for (const body of bodies) {
       const res = await fetch(listUrl, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+          referer: `${base}/${cfg.site}`,
+        },
         body: JSON.stringify(body),
       });
       lastStatus = res.status;
@@ -72,6 +78,19 @@ export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Pr
     if (!data) throw new Error(`Workday list HTTP ${lastStatus} (${cfg.company})`);
     total = data.total ?? 0;
     if (!data.jobPostings?.length) break;
+
+    // Debug-Log immer wenn die ersten Postings kommen aber Filter alles wegwirft,
+    // oder wenn SCRAPE_DEBUG=1 gesetzt ist.
+    const debugOn = process.env.SCRAPE_DEBUG === '1';
+    if ((debugOn || (offset === 0 && out.length === 0)) && data.jobPostings[0]) {
+      const sample = data.jobPostings[0];
+      console.log(`  [debug ${cfg.company}] erste Stelle:`, JSON.stringify({
+        title: sample.title,
+        locationsText: sample.locationsText,
+        locations: sample.locations,
+        primaryLocation: sample.primaryLocation,
+      }, null, 2));
+    }
 
     for (const jp of data.jobPostings) {
       const location =
