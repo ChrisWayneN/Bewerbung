@@ -106,30 +106,45 @@ async function scrapeInfineon(): Promise<JobInput[]> {
 }
 
 async function scrapeSiemens(): Promise<JobInput[]> {
-  const url = 'https://jobs.siemens.com/api/jobs?keyword=&location=Munich%2C+Germany&radius=30&num=100&pid=&offset=0&filter=&Codes=';
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error('Siemens HTTP ' + res.status);
-  const data = (await res.json()) as { jobs?: { data?: any }[] };
-  const arr = data.jobs ?? [];
-  const out: JobInput[] = [];
-  for (const item of arr) {
-    const d: any = (item as any).data ?? item;
-    const title = d.title || d.jobTitle;
-    const loc = d.city ? `${d.city}${d.state ? ', ' + d.state : ''}` : d.location;
-    const path = d.applyUrl || d.url || (d.jobId ? `https://jobs.siemens.com/jobs/${d.jobId}` : null);
-    if (!title || !path) continue;
-    const job: JobInput = {
-      company: 'Siemens',
-      title,
-      location: loc ?? 'München',
-      url: path.startsWith('http') ? path : `https://jobs.siemens.com${path}`,
-      source_portal: 'phenom',
-      description_raw: d.description ?? null,
-    };
-    job.hash = hashJob(job);
-    out.push(job);
+  // Siemens hat den /api/jobs-Endpoint umgebaut. Probiere mehrere bekannte
+  // Phenom-Endpoint-Varianten, dann HTML-Fallback.
+  const candidates = [
+    'https://jobs.siemens.com/api/jobs?keyword=&location=Munich%2C+Germany&radius=30&num=100',
+    'https://jobs.siemens.com/widgets?ddoKey=refineSearch&location=Munich%2C+Germany&radius=30&num=100',
+    'https://jobs.siemens.com/careers?location=Munich%2C+Germany&radius=30&pid=&Codes=',
+  ];
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!res.ok) continue;
+      const text = await res.text();
+      // Versuche JSON, sonst skip
+      let data: any;
+      try { data = JSON.parse(text); } catch { continue; }
+      const arr = data?.refineSearch?.data?.jobs ?? data?.jobs ?? [];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const out: JobInput[] = [];
+      for (const item of arr) {
+        const d: any = item.data ?? item;
+        const title = d.title || d.jobTitle;
+        const loc = d.city ? `${d.city}${d.state ? ', ' + d.state : ''}` : d.location;
+        const path = d.applyUrl || d.url || (d.jobId ? `https://jobs.siemens.com/jobs/${d.jobId}` : null);
+        if (!title || !path) continue;
+        const job: JobInput = {
+          company: 'Siemens',
+          title,
+          location: loc ?? 'München',
+          url: path.startsWith('http') ? path : `https://jobs.siemens.com${path}`,
+          source_portal: 'phenom',
+          description_raw: d.description ?? null,
+        };
+        job.hash = hashJob(job);
+        out.push(job);
+      }
+      if (out.length) return out;
+    } catch { /* probiere nächste URL */ }
   }
-  return out;
+  throw new Error('Siemens: kein funktionierender API-Endpoint gefunden – Karriereseite per DevTools auf XHR/JSON-URL prüfen');
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
@@ -144,10 +159,11 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
+  // Die alte URL liefert 404. Aktuelle Karriere-Hauptseite + JSON-Suche probieren.
   return scrapeGenericHtml({
     company: 'Rohde & Schwarz',
-    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html',
-    hrefPattern: /(stellen|job|career)\/.+\.html$/i,
+    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/karriere_207796.html',
+    hrefPattern: /\/karriere\/jobs?\/.+\.html$/i,
     defaultLocation: 'München',
     sourcePortal: 'rohde-html',
   });
@@ -157,9 +173,11 @@ async function scrapeIABG(): Promise<JobInput[]> {
   return scrapeGenericHtml({
     company: 'IABG',
     listingUrl: 'https://www.iabg.de/karriere/stellenangebote',
-    hrefPattern: /(stellenangebot|jobs?\/|karriere\/).+/i,
+    hrefPattern: /(stellenangebot|jobs?|karriere|career)/i,
     defaultLocation: 'Ottobrunn',
     sourcePortal: 'iabg-html',
+    assumeLocation: true,
+    minTitleLen: 5,
   });
 }
 
@@ -174,12 +192,16 @@ async function scrapeDiehl(): Promise<JobInput[]> {
 }
 
 async function scrapeMTU(): Promise<JobInput[]> {
+  // MTU listet alle Standorte – wir filtern hart auf München-Whitelist im Kontext.
+  // (vorher: 132 Treffer = alle Stellen weltweit; Filter griff nicht)
   return scrapeGenericHtml({
     company: 'MTU',
     listingUrl: 'https://www.mtu.de/careers/online-job-market/',
-    hrefPattern: /(job|jobboerse|stelle|career)/i,
+    hrefPattern: /\/careers?\/online-job-market\/job-details/i,
     defaultLocation: 'München',
     sourcePortal: 'mtu-html',
+    assumeLocation: false,
+    minTitleLen: 10,
   });
 }
 

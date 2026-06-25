@@ -12,6 +12,8 @@ interface WorkdayJob {
   title: string;
   externalPath: string;
   locationsText?: string;
+  locations?: { locationName?: string; name?: string }[];
+  primaryLocation?: { name?: string };
   bulletFields?: string[];
 }
 interface WorkdayList {
@@ -45,23 +47,39 @@ export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Pr
   let total = Infinity;
 
   while (offset < total) {
-    const res = await fetch(listUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({
-        appliedFacets: {},
-        limit,
-        offset,
-        searchText: cfg.searchText ?? '',
-      }),
-    });
-    if (!res.ok) throw new Error(`Workday list HTTP ${res.status} (${cfg.company})`);
-    const data = (await res.json()) as WorkdayList;
+    // Manche Tenants (z. B. Hensoldt) lehnen die einfache Variante mit HTTP 422 ab.
+    // Wir probieren mehrere Body-Varianten in dieser Reihenfolge.
+    const bodies: object[] = [
+      { appliedFacets: {}, limit, offset, searchText: cfg.searchText ?? '' },
+      { limit, offset, searchText: cfg.searchText ?? '' },
+      { appliedFacets: {}, limit, offset },
+      { limit, offset },
+    ];
+    let data: WorkdayList | null = null;
+    let lastStatus = 0;
+    for (const body of bodies) {
+      const res = await fetch(listUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
+      lastStatus = res.status;
+      if (res.ok) {
+        data = (await res.json()) as WorkdayList;
+        break;
+      }
+    }
+    if (!data) throw new Error(`Workday list HTTP ${lastStatus} (${cfg.company})`);
     total = data.total ?? 0;
     if (!data.jobPostings?.length) break;
 
     for (const jp of data.jobPostings) {
-      const location = jp.locationsText ?? null;
+      const location =
+        jp.locationsText
+        ?? jp.primaryLocation?.name
+        ?? jp.locations?.[0]?.locationName
+        ?? jp.locations?.[0]?.name
+        ?? null;
       if (!isMunichArea(location)) continue;
       const url = `${base}${jp.externalPath}`;
       const job: JobInput = {
