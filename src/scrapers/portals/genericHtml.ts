@@ -52,7 +52,10 @@ export async function scrapeGenericHtml(cfg: GenericHtmlConfig): Promise<JobInpu
     const matchedArea = isMunichArea(ctx) || isMunichArea(title);
     if (!cfg.assumeLocation && !matchedArea) return;
     locationOk++;
-    const url = href.startsWith('http') ? href : new URL(href, cfg.listingUrl).toString();
+    // jsessionid wandert in Java-Servlets pro Request → bei jedem Scrape
+    // andere URL → Duplikate + verlorener Hide-Status. Vor dem Speichern raus.
+    const rawUrl = href.startsWith('http') ? href : new URL(href, cfg.listingUrl).toString();
+    const url = rawUrl.replace(/;jsessionid=[^?#]*/i, '');
     const job: JobInput = {
       company: cfg.company,
       title,

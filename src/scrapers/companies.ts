@@ -418,7 +418,8 @@ async function scrapeIABG(): Promise<JobInput[]> {
   return scrapeGenericHtml({
     company: 'IABG',
     listingUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange',
-    hrefPattern: /showJobOfferDetail\.do\?jobOfferId=/i,
+    // Hinweis: zwischen .do und ?jobOfferId= steht oft ;jsessionid=...
+    hrefPattern: /showJobOfferDetail\.do[^?]*\?jobOfferId=/i,
     defaultLocation: 'Ottobrunn',
     sourcePortal: 'iabg-engage',
     assumeLocation: true,
