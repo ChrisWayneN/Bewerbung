@@ -311,7 +311,10 @@ async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
       break;
     }
     const $ = cheerio.load(html);
-    const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
+    // Nur Job-Accordions: enthalten data-job-id (Favoriten-Button).
+    // Schließt Filter-Sidebar-Accordions wie "Stadt/Region" und "Standort" aus.
+    const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item')
+      .filter((_, el) => $(el).find('[data-job-id]').length > 0);
     if (!items.length) break;
     const addedBefore = out.length;
     parseAccordions($, items, listingUrl(), out, seen);
@@ -379,12 +382,16 @@ function parseAccordions(
     out.push(job);
   });
 
-  // Zusätzlich die wenigen echten <a>-Links mitnehmen (5 vorher gefundenen)
+  // Zusätzlich echte Job-Detail-Links (eigene .html-Seiten je Stelle).
+  // Ausschluss: die Listing-Datei selbst (UI-Links wie "Alle Favoriten
+  // anzeigen" / "Change your location" zeigen mit anderen Query-Params
+  // auf dieselbe karriere-stellenangebote_251573.html).
+  const listingFile = 'karriere-stellenangebote_251573';
   const linkPattern = /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i;
   $('a[href]').each((_, a) => {
     const $a = $(a);
     const href = $a.attr('href');
-    if (!href || !linkPattern.test(href)) return;
+    if (!href || !linkPattern.test(href) || href.includes(listingFile)) return;
     const title = $a.text().trim().replace(/\s+/g, ' ');
     if (!title || title.length < 5) return;
     const fullUrl = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
