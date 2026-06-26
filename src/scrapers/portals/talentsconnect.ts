@@ -30,15 +30,15 @@ export async function scrapeTalentsConnect(cfg: TalentsConnectConfig): Promise<J
   let withMunich = 0;
   const sampleLocations: string[] = [];
 
-  $('a[data-type="offer"], a[href*="/offer/"]').each((_, a) => {
+  $('a.result-item, a[data-type="offer"], a[href*="/offer/"], a[href*="/offer-redirect"]').each((_, a) => {
     anchorsTotal++;
     withOffer++;
     const $a = $(a);
     const href = $a.attr('href');
     if (!href) return;
     const url = href.startsWith('http') ? href : new URL(href, cfg.baseUrl).toString();
-    const title = ($a.find('.h3, h3').first().text() || $a.find('h2').text() || '').trim().replace(/\s+/g, ' ');
-    const location = ($a.find('.cityNames, [class*="city"], [class*="location"]').first().text() || '').trim().replace(/\s+/g, ' ');
+    const title = ($a.find('.title, .h3, h3').first().text() || $a.find('h2').text() || '').trim().replace(/\s+/g, ' ');
+    const location = ($a.find('.location, .cityNames, .locations [class*="location"], [class*="city"], [class*="location"]').first().text() || '').trim().replace(/\s+/g, ' ');
     if (!title) return;
     withTitle++;
     if (sampleLocations.length < 5) sampleLocations.push(`${title} → "${location}"`);
