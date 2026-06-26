@@ -43,7 +43,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
-  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'own',            status: '✅', note: 'Eigene Next.js-Seite, Job-Cards mit data-label="Position/Type/Location" – client-side München/Type-Filter' },
+  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'next-rsc',       status: '✅', note: 'Next.js mit Cloudflare. HTML-Endpoint blockt (429), wir fetchen den RSC-Stream mit Firefox-UA + RSC/Next.js-Headern. Build-Token in scraper-secrets.json (helsingRscToken).' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -544,12 +544,16 @@ async function scrapeNeura(): Promise<JobInput[]> {
 }
 
 async function scrapeHelsing(): Promise<JobInput[]> {
-  // Helsing rendert die Jobs als <a href="/de/jobs/{id}"> direkt im SSR-HTML.
-  // Jede Karte enthält data-label-Divs für Position, Type, Time, Location.
-  // Tailwind-Klassen sind gehasht/instabil → wir matchen über href + data-label.
-  // Filter: nur die vom User gewählten Job-Familien, nur München.
-  const listingUrl = 'https://helsing.ai/de/jobs';
-  const html = await fetchText(listingUrl);
+  // Helsing's HTML-Endpoint kassiert 429 via Cloudflare-TLS-Fingerprinting,
+  // selbst mit Browser-Headern. Der RSC-Endpoint (?_rsc=<buildToken>) wird
+  // mit Next.js-spezifischen Headern als SPA-internal navigation behandelt
+  // und durchgelassen. Der _rsc-Token ist eine Build-ID; ändert sich beim
+  // nächsten Helsing-Deploy → dann in scraper-secrets.json aktualisieren.
+  // Die gerenderten Job-Cards sind im Stream als verbatim-HTML enthalten,
+  // Cheerio kann sie direkt parsen.
+  const token = readHelsingRscToken();
+  const rscUrl = `https://helsing.ai/de/jobs?_rsc=${token}`;
+  const html = await fetchHelsingRsc(rscUrl);
   const $ = cheerio.load(html);
   const out: JobInput[] = [];
   const seen = new Set<string>();
@@ -585,7 +589,7 @@ async function scrapeHelsing(): Promise<JobInput[]> {
     if (!/münchen|munich/i.test(location)) return;
     locationOk++;
 
-    const url = new URL(href, listingUrl).toString();
+    const url = new URL(href, 'https://helsing.ai').toString();
     if (seen.has(url)) return;
     seen.add(url);
 
@@ -594,7 +598,7 @@ async function scrapeHelsing(): Promise<JobInput[]> {
       title,
       location: location || 'München',
       url,
-      source_portal: 'helsing-own',
+      source_portal: 'helsing-rsc',
     };
     job.hash = hashJob(job);
     out.push(job);
@@ -602,9 +606,57 @@ async function scrapeHelsing(): Promise<JobInput[]> {
 
   if (out.length === 0) {
     console.log(`  [debug Helsing] 0 Treffer:`);
-    console.log(`    HTML ${html.length} bytes · ${totalAnchors} <a href=/de/jobs/N> · ${withDataLabel} mit Titel · ${typeOk} Type ok · ${locationOk} München-Match`);
+    console.log(`    RSC ${html.length} bytes · ${totalAnchors} <a href=/de/jobs/N> · ${withDataLabel} mit Titel · ${typeOk} Type ok · ${locationOk} München-Match`);
+    console.log(`    Falls Token abgelaufen: src/config/scraper-secrets.json → helsingRscToken aktualisieren (Network-Tab → jobs?_rsc=… → Wert nach _rsc=).`);
   }
   return out;
+}
+
+function readHelsingRscToken(): string {
+  try {
+    // Lazy import um Reihenfolge-Probleme zu vermeiden
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const p = path.resolve(process.cwd(), 'src/config/scraper-secrets.json');
+    if (fs.existsSync(p)) {
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (j.helsingRscToken) return String(j.helsingRscToken);
+    }
+  } catch { /* ignore */ }
+  return '0wuVtKlF3EDNwkjd';
+}
+
+async function fetchHelsingRsc(url: string): Promise<string> {
+  // Bewusst NICHT fetchText – wir brauchen exakt das Firefox-Header-Set,
+  // ohne fetchText's Chrome-Defaults (sec-ch-ua-*, sec-fetch-dest=document).
+  // Cloudflare würde inkonsistente UA + Client-Hints sonst sofort blocken.
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Referer': 'https://helsing.ai/de/jobs',
+        'RSC': '1',
+        'Next-Router-State-Tree': '%5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22de%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22jobs%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D',
+        'Next-Router-Prefetch': '1',
+        'Next-Url': '/de/jobs',
+        'Cookie': 'NEXT_LOCALE=de',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /* ---------------- Public registry ---------------- */
