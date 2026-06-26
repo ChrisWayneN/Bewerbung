@@ -217,3 +217,16 @@ export function listCompanies(): string[] {
 export function getScraperStatuses(): { company: string; status: string; last_run: string; jobs_found: number; error: string | null }[] {
   return getDb().prepare('SELECT * FROM scraper_status ORDER BY company').all() as any;
 }
+
+/** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Substring enthält (case-insensitive). */
+export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number; samples: string[] } {
+  if (!keywords.length) return { deleted: 0, samples: [] };
+  const db = getDb();
+  const conditions = keywords.map(() => 'LOWER(title) LIKE ?').join(' OR ');
+  const params = keywords.map(k => `%${k.toLowerCase()}%`);
+  const sampleStmt = db.prepare(`SELECT title FROM jobs WHERE ${conditions} LIMIT 5`);
+  const samples = (sampleStmt.all(...params) as { title: string }[]).map(r => r.title);
+  const del = db.prepare(`DELETE FROM jobs WHERE ${conditions}`);
+  const r = del.run(...params);
+  return { deleted: Number(r.changes), samples };
+}

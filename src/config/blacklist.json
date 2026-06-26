@@ -1,0 +1,10 @@
+{
+  "_comment": "Stellen mit einem dieser Wörter im Titel werden beim Scrapen rausgefiltert und beim nächsten Lauf aus der DB gelöscht. Case-insensitiv, Substring-Match. Liste beliebig erweitern.",
+  "titleKeywords": [
+    "Werkstudent",
+    "Working Student",
+    "Praktikum",
+    "Praktikant",
+    "Abschlussarbeit"
+  ]
+}
