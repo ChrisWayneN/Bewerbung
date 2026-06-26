@@ -317,6 +317,7 @@ async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
     lastHtmlLen = html.length;
     const $ = cheerio.load(html);
     const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
+    console.log(`  [R&S] page ${page}: HTML ${html.length} bytes · ${items.length} Accordion-Items im DOM`);
     if (!items.length) break;
     totalAccordionsSeen += items.length;
     const addedBefore = out.length;
