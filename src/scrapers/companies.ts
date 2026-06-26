@@ -18,7 +18,7 @@ import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeTypesense } from './portals/typesense';
 import { scrapeSapCSB } from './portals/sapCSB';
-import { scrapeEightfold } from './portals/eightfold';
+import { extractInlineJson } from './inlineJson';
 
 export interface CompanyMeta {
   name: string;
@@ -35,7 +35,6 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://hensoldt.wd3.myworkdayjobs.com/External_Career_Site', portal: 'workday', status: '✅', note: 'wd3, tenant=hensoldt, site=External_Career_Site' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Infineon',        careersUrl: 'https://jobs.infineon.com/careers',                    portal: 'eightfold',      status: '✅', note: 'Eightfold AI: /api/apply/v2/jobs' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '⚠️', note: 'MTU Aero Engines – HTML-Liste' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
@@ -92,17 +91,6 @@ async function scrapeQuantum(): Promise<JobInput[]> {
     defaultLocation: 'Gilching',
     sourcePortal: 'qs-html',
     minTitleLen: 5,
-  });
-}
-
-async function scrapeInfineon(): Promise<JobInput[]> {
-  // Verifiziert: Infineon nutzt Eightfold AI. URL-Parameter pid + filter_distance.
-  return scrapeEightfold({
-    company: 'Infineon',
-    baseUrl: 'https://jobs.infineon.com',
-    location: 'Munich, BY, Germany',
-    radiusKm: 50,
-    pid: '563808970681317',
   });
 }
 
@@ -401,7 +389,6 @@ export const scrapers: Scraper[] = [
   { company: 'Franka Robotics', run: wrap('Franka Robotics', scrapeFranka) },
   { company: 'Quantum Systems', run: wrap('Quantum Systems', scrapeQuantum) },
   { company: 'Neura Robotics',  run: wrap('Neura Robotics',  scrapeNeura) },
-  { company: 'Infineon',        run: wrap('Infineon',        scrapeInfineon) },
   { company: 'Siemens',         run: wrap('Siemens',         scrapeSiemens) },
   { company: 'KNDS',            run: wrap('KNDS',            scrapeKNDS) },
   { company: 'Rohde & Schwarz', run: wrap('Rohde & Schwarz', scrapeRohdeSchwarz) },
