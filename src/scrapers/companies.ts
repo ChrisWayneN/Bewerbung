@@ -33,7 +33,7 @@ export interface CompanyMeta {
 export const COMPANIES: CompanyMeta[] = [
   { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'phenom/own',     status: '⚠️', note: 'Eigenes Portal jobs.knds.de – Phenom-ähnlich. HTML-Fallback.' },
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html', portal: 'paulsjob-html',  status: '✅', note: 'paulsjob.ai-Backend, server-rendered. Pagination per &offset=N in 30er-Schritten (Lazy-Load).' },
-  { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet)' },
+  { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet) – Liste unter showJobOfferList.do, <tr class=joboffer>' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
@@ -410,11 +410,15 @@ function parseAccordions(
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
-  // Verifiziert: IABG nutzt ein Engage-Jobbörsen-System unter jobboerse.iabg.de.
+  // IABG nutzt das Engage-Jobbörsen-System. Stellen-Liste steht unter
+  // showJobOfferList.do (searchJobOffersQuick.do ist nur die Such-Maske
+  // ohne Liste und liefert daher nur UI-Links wie "Initiativbewerbung",
+  // "Offene Stellen", "English"). Jobs sind <tr class="joboffer"> mit
+  // <a href="showJobOfferDetail.do?jobOfferId=...">Titel</a>.
   return scrapeGenericHtml({
     company: 'IABG',
-    listingUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?languageChanged=true&j=myjobexchange',
-    hrefPattern: /(jobOffer|jobExchange|viewJobOffer|engage).*\.do/i,
+    listingUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange',
+    hrefPattern: /showJobOfferDetail\.do\?jobOfferId=/i,
     defaultLocation: 'Ottobrunn',
     sourcePortal: 'iabg-engage',
     assumeLocation: true,
