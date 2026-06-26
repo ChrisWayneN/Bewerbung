@@ -16,6 +16,7 @@ import { scrapeWorkday } from './portals/workday';
 import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
+import { scrapeTypesense } from './portals/typesense';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeEightfold } from './portals/eightfold';
 
@@ -355,10 +356,39 @@ async function scrapeMTU(): Promise<JobInput[]> {
 }
 
 async function scrapeNeura(): Promise<JobInput[]> {
-  // talentsconnect liefert die Stellen auf der /search-Seite.
-  return scrapeTalentsConnect({
+  // Neura nutzt das my-job-shop.com / talentsconnect Backend, das auf Typesense
+  // (Open-Source-Suchengine) basiert. Direkt die Multi-Search-API ansprechen.
+  // Der Scoped-Search-Key enthält am Ende einen base64-Filter:
+  //   tenant_id:=neura-robotics && backoffice_vanity:=karriere && status:=ACTIVE
+  // → der Key liefert von Haus aus nur Neura-Robotics Stellen.
+  return scrapeTypesense({
     company: 'Neura Robotics',
-    baseUrl: 'https://jobs.neura-robotics.com',
+    apiUrl: 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=Y0xpcjhoMHpxMUZsOG1XSGxFOTRvc0F5Vkg0NDZOSEpsZ2d0ZzFES3haZz1QOXp4eyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D',
+    searchBody: {
+      searches: [{
+        collection: 'offers',
+        exclude_fields: 'title_embed,description,expectation,introduction,about,offering,contact_text,additional,benefits',
+        facet_by: 'department,location',
+        highlight_full_fields: 'title,location,external_id,company,full_address,title_embed',
+        max_facet_values: 1000,
+        per_page: 50,
+        q: '*',
+        query_by: 'title,location,external_id,company,full_address,title_embed',
+        sort_by: '_text_match:desc,title:asc,location_count:desc',
+      }],
+    },
+    buildDetailUrl: (doc) => {
+      // Beobachtete Detail-URL aus dem DOM:
+      //   https://jobs.neura-robotics.com/de/offer-redirect/?offerApiId={base64(external_id)}&showApplicationForm=false
+      // Falls external_id fehlt: auf vorhandene URL-Felder zurückfallen.
+      if (typeof doc.url === 'string' && doc.url.startsWith('http')) return doc.url;
+      if (typeof doc.permalink === 'string' && doc.permalink.startsWith('http')) return doc.permalink;
+      const id = doc.external_id ?? doc.id ?? doc.slug;
+      if (id == null) return null;
+      const encoded = Buffer.from(String(id), 'utf8').toString('base64');
+      return `https://jobs.neura-robotics.com/de/offer-redirect/?offerApiId=${encodeURIComponent(encoded)}&showApplicationForm=false`;
+    },
+    sourcePortal: 'typesense',
   });
 }
 
