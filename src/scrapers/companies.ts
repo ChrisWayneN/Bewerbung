@@ -32,7 +32,7 @@ export interface CompanyMeta {
 
 export const COMPANIES: CompanyMeta[] = [
   { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'phenom/own',     status: '⚠️', note: 'Eigenes Portal jobs.knds.de – Phenom-ähnlich. HTML-Fallback.' },
-  { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html', portal: 'AEM-custom',     status: '⚠️', note: 'Eigene AEM-Seite, kein offenes JSON. HTML-Fallback.' },
+  { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html', portal: 'paulsjob-html',  status: '✅', note: 'paulsjob.ai-Backend, server-rendered. URL mit ?filter[rsCity][]=München' },
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet)' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
@@ -292,28 +292,17 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // Die alte 207796.html liefert 404. Aktuelle bekannte Listing-URLs probieren.
-  const candidates = [
-    'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html',
-    'https://www.rohde-schwarz.com/de/karriere/stellenangebote/stellenangebote_55440.html',
-    'https://www.rohde-schwarz.com/de/karriere/karriere_3692.html',
-    'https://www.rohde-schwarz.com/de/karriere/jobs/karriere_207796.html',
-  ];
-  let lastErr: unknown = null;
-  for (const url of candidates) {
-    try {
-      return await scrapeGenericHtml({
-        company: 'Rohde & Schwarz',
-        listingUrl: url,
-        hrefPattern: /\/karriere\/(jobs?|stellenangebote)\/.+\.html$/i,
-        defaultLocation: 'München',
-        sourcePortal: 'rohde-html',
-      });
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('R&S: alle Listing-URL-Kandidaten lieferten Fehler');
+  // Listing-URL ist server-side gerendert (HTML enthält die Stellen direkt).
+  // URL filtert bereits auf Deutschland + München → assumeLocation true.
+  return scrapeGenericHtml({
+    company: 'Rohde & Schwarz',
+    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen',
+    hrefPattern: /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i,
+    defaultLocation: 'München',
+    sourcePortal: 'rohde-html',
+    assumeLocation: true,
+    minTitleLen: 5,
+  });
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
