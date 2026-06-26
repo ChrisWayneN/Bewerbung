@@ -344,7 +344,7 @@ async function scrapeNeura(): Promise<JobInput[]> {
   // → der Key liefert von Haus aus nur Neura-Robotics Stellen.
   return scrapeTypesense({
     company: 'Neura Robotics',
-    apiUrl: 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=MDNaU3h2THc2a2xnRXoveGcxWjM3aVYrcXNBclhxV1BrWTZodzRyaWI0Yz1pNklXeyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9Y2FyZWVyJiZzdGF0dXM6PUFDVElWRSJ9',
+    apiUrl: 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=Z0NhdmQxYnNPYnVJTDBVUHJCUWpNUU5jOEpWdGsrbE81RDgyV2Jrb2g2OD12ZDI1eyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D',
     searchBody: {
       searches: [{
         collection: 'offers',
