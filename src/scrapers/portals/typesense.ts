@@ -50,12 +50,9 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
   const maxPages = cfg.maxPages ?? 20;
   let firstPageDebugged = false;
 
-  // Key per Regex aus URL ziehen; URL UND Header gleichzeitig setzen ist OK
-  // (Typesense-Server prüft beide Stellen, wenn eines passt → Auth OK).
-  const keyMatch = cfg.apiUrl.match(/[?&]x-typesense-api-key=([^&]+)/i);
-  const apiKeyRaw = keyMatch?.[1] ?? null;
-  const apiKey = apiKeyRaw ? decodeURIComponent(apiKeyRaw) : null;
-
+  // WICHTIG: Browser sendet den API-Key NUR als URL-Parameter, NICHT als Header,
+  // und benutzt content-type: text/plain (CORS-Preflight-Bypass). Wenn wir
+  // den Header zusätzlich setzen oder content-type ändern, lehnt der Proxy ab.
   const origin = cfg.originHost ?? 'https://jobs.neura-robotics.com';
 
   for (let page = 1; page <= maxPages; page++) {
@@ -63,29 +60,21 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
     for (const s of body.searches) s.page = page;
 
     const headers: Record<string, string> = {
-      'content-type': 'application/json',
+      'content-type': 'text/plain',
       accept: 'application/json, text/plain, */*',
-      'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
       origin,
-      referer: origin + '/search',
-      'cache-control': 'no-cache',
-      pragma: 'no-cache',
+      referer: origin + '/',
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'cross-site',
-      'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
     };
-    if (apiKey) headers['x-typesense-api-key'] = apiKey;
 
-    // URL behalten wie sie ist (Parameter drin) – Browser macht das auch so.
     const res = await fetch(cfg.apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      const keyHint = apiKey ? `key=${apiKey.length}ch (${apiKey.slice(0, 12)}…${apiKey.slice(-8)})` : 'key=missing';
-      throw new Error(`Typesense HTTP ${res.status} (${cfg.company}) [${keyHint}]${errText ? ' – ' + errText.slice(0, 200) : ''}`);
+      throw new Error(`Typesense HTTP ${res.status} (${cfg.company})${errText ? ' – ' + errText.slice(0, 200) : ''}`);
     }
     const data = (await res.json()) as TypesenseMultiSearchResponse;
     const result = data.results?.[0];
