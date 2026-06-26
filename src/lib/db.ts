@@ -218,6 +218,28 @@ export function getScraperStatuses(): { company: string; status: string; last_ru
   return getDb().prepare('SELECT * FROM scraper_status ORDER BY company').all() as any;
 }
 
+/** Löscht DB-Einträge einer Firma, deren URL nicht in keepUrls vorkommt.
+ *  Wird nach einem erfolgreichen Scrape aufgerufen, um Geister-Einträge
+ *  (frühere Fehlmatches oder offline genommene Stellen) zu entfernen.
+ *  Nur aufrufen, wenn der Scrape mindestens eine Stelle geliefert hat,
+ *  damit ein leerer/kaputter Lauf nicht die ganze Firma leert. */
+export function deleteStaleJobsForCompany(company: string, keepUrls: Iterable<string>): { deleted: number; samples: string[] } {
+  const keep = new Set(keepUrls);
+  const db = getDb();
+  const all = db.prepare('SELECT id, title, url FROM jobs WHERE company = ?').all(company) as { id: number; title: string; url: string }[];
+  const toDelete: { id: number; title: string }[] = [];
+  for (const row of all) {
+    if (!keep.has(row.url)) toDelete.push({ id: row.id, title: row.title });
+  }
+  if (!toDelete.length) return { deleted: 0, samples: [] };
+  const tx = db.transaction((ids: number[]) => {
+    const del = db.prepare('DELETE FROM jobs WHERE id = ?');
+    for (const id of ids) del.run(id);
+  });
+  tx(toDelete.map(d => d.id));
+  return { deleted: toDelete.length, samples: toDelete.slice(0, 5).map(d => d.title) };
+}
+
 /** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Phrase enthält
  *  (case-insensitive, Trenner-tolerant, Wortgrenzen-Match für kurze Begriffe ≤ 3 Zeichen). */
 export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number; samples: string[] } {

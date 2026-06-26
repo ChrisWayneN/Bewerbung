@@ -1,5 +1,5 @@
 import { scrapers } from './companies';
-import { upsertJobs, recordImportRun, recordScraperStatus, deleteJobsByTitleKeywords } from '../lib/db';
+import { upsertJobs, recordImportRun, recordScraperStatus, deleteJobsByTitleKeywords, deleteStaleJobsForCompany } from '../lib/db';
 import { getBlacklistKeywords, matchedBlacklistTerm } from '../lib/blacklist';
 
 export interface RunOptions {
@@ -39,12 +39,19 @@ export async function runAllScrapers(opts: RunOptions = {}) {
         const up = upsertJobs(allowed);
         totalJobs += allowed.length;
         totalNew += up.inserted;
+        // Prune: bei erfolgreichem Scrape (mind. eine Stelle gefunden) DB-Einträge
+        // derselben Firma löschen, die nicht mehr im aktuellen Ergebnis stehen.
+        let staleStr = '';
+        if (result.status === 'ok' && allowed.length > 0) {
+          const prune = deleteStaleJobsForCompany(s.company, allowed.map(j => j.url));
+          if (prune.deleted > 0) staleStr = ` (-${prune.deleted} stale)`;
+        }
         recordScraperStatus(s.company, result.status, allowed.length, result.error);
         const icon = result.status === 'ok' ? '✅' : result.status === 'partial' ? '⚠️' : '❌';
         const dt = ((Date.now() - tStart) / 1000).toFixed(1);
         const skip = result.jobs.length - allowed.length;
         const skipStr = skip > 0 ? ` (-${skip} blacklist)` : '';
-        log(`${icon} ${s.company.padEnd(20)} ${String(allowed.length).padStart(3)} Stellen · +${up.inserted} neu${skipStr} · ${dt}s ${result.error ? '(' + result.error + ')' : ''}`);
+        log(`${icon} ${s.company.padEnd(20)} ${String(allowed.length).padStart(3)} Stellen · +${up.inserted} neu${skipStr}${staleStr} · ${dt}s ${result.error ? '(' + result.error + ')' : ''}`);
         summary.push({ company: s.company, status: result.status, found: allowed.length, error: result.error });
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
