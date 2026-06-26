@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS scraper_status (
   error TEXT
 );
 
+-- URLs, die der User ausgeblendet hat. Überlebt Auto-Prune und Wieder-
+-- auftauchen einer Stelle: upsertJobs prüft beim INSERT, ob die URL hier
+-- steht, und setzt dann hidden=1 statt 0.
+CREATE TABLE IF NOT EXISTS hidden_urls (
+  url TEXT PRIMARY KEY,
+  hidden_at TEXT NOT NULL
+);
+
 -- FTS5 virtual table for full-text search.
 CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
   title, company, location, tasks, qualifications, description_raw,

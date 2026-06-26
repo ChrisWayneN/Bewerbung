@@ -18,6 +18,16 @@ export function getDb(): Database.Database {
     const schema = readFileSync(SCHEMA_PATH, 'utf8');
     db.exec(schema);
   }
+  // Backfill: bestehende hidden=1-Jobs in hidden_urls übernehmen, falls
+  // die Tabelle leer ist (z.B. nach Schema-Migration). Idempotent durch
+  // INSERT OR IGNORE.
+  const cnt = db.prepare('SELECT COUNT(*) AS c FROM hidden_urls').get() as { c: number };
+  if (cnt.c === 0) {
+    db.exec(`
+      INSERT OR IGNORE INTO hidden_urls (url, hidden_at)
+      SELECT url, COALESCE(last_seen, first_seen) FROM jobs WHERE hidden = 1
+    `);
+  }
   _db = db;
   return db;
 }
@@ -60,11 +70,12 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
   const db = getDb();
   const now = new Date().toISOString();
   const select = db.prepare('SELECT id, hash FROM jobs WHERE url = ?');
+  const isHidden = db.prepare('SELECT 1 FROM hidden_urls WHERE url = ?');
   const insert = db.prepare(`
     INSERT INTO jobs (company, title, location, url, source_portal, description_raw,
       tasks, qualifications, first_seen, last_seen, hidden, hash)
     VALUES (@company, @title, @location, @url, @source_portal, @description_raw,
-      @tasks, @qualifications, @first_seen, @last_seen, 0, @hash)
+      @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash)
   `);
   const update = db.prepare(`
     UPDATE jobs SET title=@title, location=@location, source_portal=@source_portal,
@@ -94,7 +105,8 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
         hash: j.hash ?? null,
       };
       if (!existing) {
-        const r = insert.run(row);
+        const hidden = isHidden.get(j.url) ? 1 : 0;
+        const r = insert.run({ ...row, hidden });
         inserted++;
         ids.push(Number(r.lastInsertRowid));
       } else {
@@ -205,7 +217,18 @@ export function getJob(id: number): (JobRow & { is_new: boolean }) | null {
 }
 
 export function setHidden(id: number, hidden: boolean): void {
-  getDb().prepare('UPDATE jobs SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+  const db = getDb();
+  const row = db.prepare('SELECT url FROM jobs WHERE id = ?').get(id) as { url: string } | undefined;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE jobs SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+    if (!row) return;
+    if (hidden) {
+      db.prepare('INSERT OR IGNORE INTO hidden_urls (url, hidden_at) VALUES (?, ?)').run(row.url, new Date().toISOString());
+    } else {
+      db.prepare('DELETE FROM hidden_urls WHERE url = ?').run(row.url);
+    }
+  });
+  tx();
 }
 
 export function listCompanies(): string[] {
