@@ -35,7 +35,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/jobs/jobs_232562.html', portal: 'AEM-custom',     status: '⚠️', note: 'Eigene AEM-Seite, kein offenes JSON. HTML-Fallback.' },
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/searchJobOffersQuick.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet)' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
-  { name: 'Hensoldt',        careersUrl: 'https://hensoldt.wd3.myworkdayjobs.com/External_Career_Site', portal: 'workday', status: '✅', note: 'wd3, tenant=hensoldt, site=External_Career_Site' },
+  { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '⚠️', note: 'MTU Aero Engines – HTML-Liste' },
@@ -67,7 +67,71 @@ async function scrapeAirbus(): Promise<JobInput[]> {
 }
 
 async function scrapeHensoldt(): Promise<JobInput[]> {
-  return scrapeWorkday({ company: 'Hensoldt', tenant: 'hensoldt', wd: 3, site: 'External_Career_Site' }, true);
+  // Hensoldt nutzt SAP SuccessFactors Career Search unter jobs.hensoldt.net.
+  // Wir holen alle DE-Stellen (ohne Standort-Filter, damit Hensoldt-München-Standorte
+  // wie Fürstenfeldbruck + Taufkirchen reinkommen) und lassen unseren Munich-Filter laufen.
+  const baseUrl = 'https://jobs.hensoldt.net';
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  const pageSize = 25;
+
+  for (let startrow = 0; startrow < 500; startrow += pageSize) {
+    const url = `${baseUrl}/search/?createNewAlert=false&q=&optionsFacetsDD_country=DE&startrow=${startrow}`;
+    let html: string;
+    try {
+      html = await fetchText(url);
+    } catch {
+      break;
+    }
+    const $ = cheerio.load(html);
+    const links = $('a.jobTitle-link, a[id*="jobTitle"]');
+    if (!links.length) break;
+
+    let pageAdded = 0;
+    links.each((_, a) => {
+      const $a = $(a);
+      const href = $a.attr('href');
+      if (!href) return;
+      const title = $a.text().trim().replace(/\s+/g, ' ');
+      if (!title) return;
+      const row = $a.closest('tr, li, .data-row, .job-tile, .jobItem, article');
+      const location = (
+        row.find('.jobLocation, [class*="location" i]').first().text() ||
+        row.text()
+      ).trim().replace(/\s+/g, ' ');
+      if (!isMunichArea(location)) return;
+      const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+      if (seen.has(fullUrl)) return;
+      seen.add(fullUrl);
+      const job: JobInput = {
+        company: 'Hensoldt',
+        title,
+        location,
+        url: fullUrl,
+        source_portal: 'sf-search',
+      };
+      job.hash = hashJob(job);
+      out.push(job);
+      pageAdded++;
+    });
+
+    if (links.length < pageSize) break;
+    if (pageAdded === 0 && startrow > 0) break;
+  }
+
+  if (out.length === 0) {
+    console.log(`  [debug Hensoldt] 0 Treffer:`);
+    try {
+      const dbgHtml = await fetchText(`${baseUrl}/search/?createNewAlert=false&q=&optionsFacetsDD_country=DE`);
+      const $ = cheerio.load(dbgHtml);
+      console.log(`    HTML ${dbgHtml.length} bytes · a.jobTitle-link: ${$('a.jobTitle-link').length} · alle a[href*="/job/"]: ${$('a[href*="/job/"]').length}`);
+      const samples: string[] = [];
+      $('a[href]').each((_, a) => { if (samples.length < 5) samples.push($(a).attr('href') || ''); });
+      console.log(`    Erste hrefs: ${samples.join(' | ')}`);
+    } catch (e) { console.log(`    HTML-Fetch fehlgeschlagen: ${(e as Error).message}`); }
+  }
+
+  return out;
 }
 
 async function scrapeAgileRobots(): Promise<JobInput[]> {
