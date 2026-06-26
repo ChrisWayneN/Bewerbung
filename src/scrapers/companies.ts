@@ -17,6 +17,7 @@ import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeTypesense } from './portals/typesense';
+import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { extractInlineJson } from './inlineJson';
 
@@ -77,20 +78,12 @@ async function scrapeFranka(): Promise<JobInput[]> {
 }
 
 async function scrapeQuantum(): Promise<JobInput[]> {
-  // Erst Personio-Slug probieren, dann HTML-Fallback auf eigene Domain.
-  // Personio liefert bei nicht-existentem Slug oft leeres XML → wir fallen
-  // bei 0 Treffern explizit auf den HTML-Pfad zurück.
-  try {
-    const personio = await scrapePersonio({ company: 'Quantum Systems', tenant: 'quantum-systems', tld: 'de' });
-    if (personio.length > 0) return personio;
-  } catch { /* fall through */ }
-  return scrapeGenericHtml({
+  // Quantum Systems nutzt Recruitee mit Custom-Domain career.quantum-systems.com.
+  // Recruitee Public API: /api/offers/ liefert alle Stellen als JSON.
+  return scrapeRecruitee({
     company: 'Quantum Systems',
-    listingUrl: 'https://career.quantum-systems.com/',
-    hrefPattern: /\/(jobs?|offer|position|stelle|karriere|stellenangebote)\/[^"'\s?#]+/i,
-    defaultLocation: 'Gilching',
-    sourcePortal: 'qs-html',
-    minTitleLen: 5,
+    tenant: 'quantum-systems',
+    customDomain: 'career.quantum-systems.com',
   });
 }
 
