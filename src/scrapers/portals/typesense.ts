@@ -26,6 +26,8 @@ export interface TypesenseConfig {
   pickLocation?: (doc: Record<string, any>) => string | null;
   sourcePortal: string;
   maxPages?: number;
+  /** Origin/Referer-Host der Karriereseite (für CORS-Header). */
+  originHost?: string;
 }
 
 function defaultTitle(doc: Record<string, any>): string | null {
@@ -48,21 +50,35 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
   const maxPages = cfg.maxPages ?? 20;
   let firstPageDebugged = false;
 
+  // Den API-Key aus der URL ziehen, um ihn zusätzlich als Header zu senden
+  // (manche Proxys verlangen den Header zwingend und lehnen URL-only ab).
+  let parsedApiKey: string | null = null;
+  try {
+    const u = new URL(cfg.apiUrl);
+    parsedApiKey = u.searchParams.get('x-typesense-api-key');
+  } catch { /* ignore */ }
+
+  const origin = cfg.originHost ?? 'https://jobs.neura-robotics.com';
+
   for (let page = 1; page <= maxPages; page++) {
     const body = JSON.parse(JSON.stringify(cfg.searchBody));
     for (const s of body.searches) s.page = page;
 
-    const res = await fetch(cfg.apiUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/plain, */*',
-        'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`Typesense HTTP ${res.status} (${cfg.company})`);
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/plain, */*',
+      'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      origin,
+      referer: origin + '/',
+    };
+    if (parsedApiKey) headers['x-typesense-api-key'] = parsedApiKey;
+
+    const res = await fetch(cfg.apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Typesense HTTP ${res.status} (${cfg.company})${errText ? ' – ' + errText.slice(0, 200) : ''}`);
+    }
     const data = (await res.json()) as TypesenseMultiSearchResponse;
     const result = data.results?.[0];
     const hits = result?.hits ?? [];
