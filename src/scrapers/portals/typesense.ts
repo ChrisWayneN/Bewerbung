@@ -50,13 +50,19 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
   const maxPages = cfg.maxPages ?? 20;
   let firstPageDebugged = false;
 
-  // Den API-Key aus der URL ziehen, um ihn zusätzlich als Header zu senden
-  // (manche Proxys verlangen den Header zwingend und lehnen URL-only ab).
-  let parsedApiKey: string | null = null;
-  try {
-    const u = new URL(cfg.apiUrl);
-    parsedApiKey = u.searchParams.get('x-typesense-api-key');
-  } catch { /* ignore */ }
+  // Den API-Key per Regex direkt aus der URL ziehen, um URLSearchParams-Quirks
+  // (z. B. `+` → Space) zu umgehen. Dann URL säubern, damit URL-Param und
+  // Header sich nicht widersprechen können.
+  const keyMatch = cfg.apiUrl.match(/[?&]x-typesense-api-key=([^&]+)/i);
+  const apiKeyRaw = keyMatch?.[1] ?? null;
+  const apiKey = apiKeyRaw ? decodeURIComponent(apiKeyRaw) : null;
+  // Clean URL: ohne den x-typesense-api-key-Query-Param
+  const cleanUrl = cfg.apiUrl.replace(/([?&])x-typesense-api-key=[^&]+&?/i, (_, sep) => sep === '?' ? '?' : '').replace(/[?&]$/, '');
+
+  if (process.env.SCRAPE_DEBUG === '1') {
+    console.log(`  [debug ${cfg.company}] Typesense key (decoded, ${apiKey?.length} chars): ${apiKey?.slice(0, 20)}...${apiKey?.slice(-10)}`);
+    console.log(`  [debug ${cfg.company}] clean URL: ${cleanUrl}`);
+  }
 
   const origin = cfg.originHost ?? 'https://jobs.neura-robotics.com';
 
@@ -72,12 +78,13 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
       origin,
       referer: origin + '/',
     };
-    if (parsedApiKey) headers['x-typesense-api-key'] = parsedApiKey;
+    if (apiKey) headers['x-typesense-api-key'] = apiKey;
 
-    const res = await fetch(cfg.apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+    const res = await fetch(cleanUrl, { method: 'POST', headers, body: JSON.stringify(body) });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      throw new Error(`Typesense HTTP ${res.status} (${cfg.company})${errText ? ' – ' + errText.slice(0, 200) : ''}`);
+      const keyHint = apiKey ? `key=${apiKey.length}ch (${apiKey.slice(0, 12)}…${apiKey.slice(-8)})` : 'key=missing';
+      throw new Error(`Typesense HTTP ${res.status} (${cfg.company}) [${keyHint}]${errText ? ' – ' + errText.slice(0, 200) : ''}`);
     }
     const data = (await res.json()) as TypesenseMultiSearchResponse;
     const result = data.results?.[0];
