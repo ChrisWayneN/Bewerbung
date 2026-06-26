@@ -219,20 +219,20 @@ export function getScraperStatuses(): { company: string; status: string; last_ru
 }
 
 /** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Phrase enthält
- *  (case-insensitive, Trenner-tolerant – „Software Engineer" matcht auch „Software-Engineer"). */
+ *  (case-insensitive, Trenner-tolerant, Wortgrenzen-Match für kurze Begriffe ≤ 3 Zeichen). */
 export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number; samples: string[] } {
   if (!keywords.length) return { deleted: 0, samples: [] };
-  // Inline-Normalisierung, um zirkuläre Imports zu vermeiden.
-  const normalize = (s: string) => s.toLowerCase().replace(/[-_/\\]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const needles = keywords.map(normalize);
+  // Lazy import um Reihenfolge-Probleme bei Modul-Loading zu vermeiden.
+  const { normalizeForMatch, matchNeedle } = require('./blacklist') as typeof import('./blacklist');
+  const needles = keywords.map(normalizeForMatch);
 
   const db = getDb();
   const all = db.prepare('SELECT id, title FROM jobs').all() as { id: number; title: string }[];
   const toDelete: number[] = [];
   const samples: string[] = [];
   for (const row of all) {
-    const hay = normalize(row.title ?? '');
-    if (needles.some(n => hay.includes(n))) {
+    const hay = normalizeForMatch(row.title ?? '');
+    if (needles.some(n => matchNeedle(hay, n))) {
       toDelete.push(row.id);
       if (samples.length < 5) samples.push(row.title);
     }
