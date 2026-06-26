@@ -292,52 +292,97 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // Listing-URL ist server-side gerendert, aber paginiert (Default ~5 pro Seite).
-  // R&S hat ~96 Stellen in München → wir iterieren ?page=N bis nichts Neues kommt.
-  const baseUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html';
-  const filterParams = '?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
-  const hrefPattern = /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i;
+  // R&S rendert die Stellen-Liste als Accordion-Items:
+  //   <div class="module-accordion accordion-disabled" data-view="accordion-item">
+  //     <div id="jobboard-search-table-heading-N" class="title">Titel</div>
+  //     <div id="jobboard-search-table-content-N" class="content">… ggf. Apply-Link …</div>
+  //   </div>
+  // URL filtert bereits auf Deutschland + München (assumeLocation true).
+  const listingUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
+  const html = await fetchText(listingUrl);
+  const $ = cheerio.load(html);
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  const maxPages = 40;
 
-  for (let page = 1; page <= maxPages; page++) {
-    const url = page === 1 ? `${baseUrl}${filterParams}` : `${baseUrl}${filterParams}&page=${page}`;
-    let html: string;
-    try {
-      html = await fetchText(url);
-    } catch {
-      break;
+  const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
+  items.each((_, el) => {
+    const $item = $(el);
+    const $title = $item.find('.title').first();
+
+    // Titel ohne den eingebetteten Mobile-Info-Block (favorite-Button etc.)
+    const titleClone = $title.clone();
+    titleClone.find('div, span, a').remove();
+    const title = titleClone.text().trim().replace(/\s+/g, ' ');
+    if (!title || title.length < 5) return;
+
+    let url: string | null = null;
+
+    // Strategie 1: data-job-id (im favorite-Link, eindeutige Stellen-ID von R&S)
+    const jobId = $item.find('[data-job-id]').first().attr('data-job-id');
+    if (jobId) {
+      url = `${listingUrl}#job-${jobId}`;
     }
-    const $ = cheerio.load(html);
-    let added = 0;
-    $('a').each((_, a) => {
-      const $a = $(a);
-      const href = $a.attr('href');
-      if (!href) return;
-      if (!hrefPattern.test(href)) return;
-      const title = $a.text().trim().replace(/\s+/g, ' ');
-      if (!title || title.length < 5) return;
-      const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
-      if (seen.has(fullUrl)) return;
-      seen.add(fullUrl);
-      const job: JobInput = {
-        company: 'Rohde & Schwarz',
-        title,
-        location: 'München',
-        url: fullUrl,
-        source_portal: 'rohde-html',
-      };
-      job.hash = hashJob(job);
-      out.push(job);
-      added++;
-    });
-    if (added === 0 && page > 1) break;
-  }
+
+    // Strategie 2: echter Detail-/Apply-Link
+    if (!url) {
+      $item.find('a[href]').each((_, a) => {
+        const href = $(a).attr('href');
+        if (!href || /^(#|javascript:|mailto:)/.test(href)) return;
+        url = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
+        return false;
+      });
+    }
+
+    // Strategie 3: Heading-Fragment
+    if (!url) {
+      const headingId = $title.attr('id') || $item.find('[id^="jobboard-search-table-heading"]').attr('id');
+      if (headingId) url = `${listingUrl}#${headingId}`;
+    }
+
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+
+    const job: JobInput = {
+      company: 'Rohde & Schwarz',
+      title,
+      location: 'München',
+      url,
+      source_portal: 'rohde-html',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
+  });
+
+  // Zusätzlich die wenigen echten <a>-Links mitnehmen (5 vorher gefundenen)
+  const linkPattern = /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i;
+  $('a[href]').each((_, a) => {
+    const $a = $(a);
+    const href = $a.attr('href');
+    if (!href || !linkPattern.test(href)) return;
+    const title = $a.text().trim().replace(/\s+/g, ' ');
+    if (!title || title.length < 5) return;
+    const fullUrl = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
+    if (seen.has(fullUrl)) return;
+    seen.add(fullUrl);
+    const job: JobInput = {
+      company: 'Rohde & Schwarz',
+      title,
+      location: 'München',
+      url: fullUrl,
+      source_portal: 'rohde-html',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
+  });
 
   if (out.length === 0) {
-    console.log(`  [debug R&S] 0 Treffer trotz Pagination-Loop`);
+    console.log(`  [debug R&S] 0 Treffer:`);
+    console.log(`    HTML ${html.length} bytes`);
+    console.log(`    div.module-accordion: ${$('div.module-accordion').length}`);
+    console.log(`    [data-view="accordion-item"]: ${$('[data-view="accordion-item"]').length}`);
+    console.log(`    .title in accordion: ${$('div.module-accordion .title').length}`);
   }
+
   return out;
 }
 
