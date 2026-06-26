@@ -50,19 +50,11 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
   const maxPages = cfg.maxPages ?? 20;
   let firstPageDebugged = false;
 
-  // Den API-Key per Regex direkt aus der URL ziehen, um URLSearchParams-Quirks
-  // (z. B. `+` → Space) zu umgehen. Dann URL säubern, damit URL-Param und
-  // Header sich nicht widersprechen können.
+  // Key per Regex aus URL ziehen; URL UND Header gleichzeitig setzen ist OK
+  // (Typesense-Server prüft beide Stellen, wenn eines passt → Auth OK).
   const keyMatch = cfg.apiUrl.match(/[?&]x-typesense-api-key=([^&]+)/i);
   const apiKeyRaw = keyMatch?.[1] ?? null;
   const apiKey = apiKeyRaw ? decodeURIComponent(apiKeyRaw) : null;
-  // Clean URL: ohne den x-typesense-api-key-Query-Param
-  const cleanUrl = cfg.apiUrl.replace(/([?&])x-typesense-api-key=[^&]+&?/i, (_, sep) => sep === '?' ? '?' : '').replace(/[?&]$/, '');
-
-  if (process.env.SCRAPE_DEBUG === '1') {
-    console.log(`  [debug ${cfg.company}] Typesense key (decoded, ${apiKey?.length} chars): ${apiKey?.slice(0, 20)}...${apiKey?.slice(-10)}`);
-    console.log(`  [debug ${cfg.company}] clean URL: ${cleanUrl}`);
-  }
 
   const origin = cfg.originHost ?? 'https://jobs.neura-robotics.com';
 
@@ -76,11 +68,20 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
       'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       origin,
-      referer: origin + '/',
+      referer: origin + '/search',
+      'cache-control': 'no-cache',
+      pragma: 'no-cache',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'cross-site',
+      'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
     };
     if (apiKey) headers['x-typesense-api-key'] = apiKey;
 
-    const res = await fetch(cleanUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+    // URL behalten wie sie ist (Parameter drin) – Browser macht das auch so.
+    const res = await fetch(cfg.apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       const keyHint = apiKey ? `key=${apiKey.length}ch (${apiKey.slice(0, 12)}…${apiKey.slice(-8)})` : 'key=missing';
