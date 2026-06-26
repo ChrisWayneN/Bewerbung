@@ -43,6 +43,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
+  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'own',            status: '✅', note: 'Eigene Next.js-Seite, Job-Cards mit data-label="Position/Type/Location" – client-side München/Type-Filter' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -542,6 +543,70 @@ async function scrapeNeura(): Promise<JobInput[]> {
   });
 }
 
+async function scrapeHelsing(): Promise<JobInput[]> {
+  // Helsing rendert die Jobs als <a href="/de/jobs/{id}"> direkt im SSR-HTML.
+  // Jede Karte enthält data-label-Divs für Position, Type, Time, Location.
+  // Tailwind-Klassen sind gehasht/instabil → wir matchen über href + data-label.
+  // Filter: nur die vom User gewählten Job-Familien, nur München.
+  const listingUrl = 'https://helsing.ai/de/jobs';
+  const html = await fetchText(listingUrl);
+  const $ = cheerio.load(html);
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+
+  const allowedTypes = new Set([
+    'hardware engineering',
+    'systems architecture',
+    'deployed engineering',
+    'campaigns & programmes',
+    'campaigns and programmes',
+  ]);
+
+  let totalAnchors = 0;
+  let withDataLabel = 0;
+  let typeOk = 0;
+  let locationOk = 0;
+
+  $('a[href^="/de/jobs/"]').each((_, a) => {
+    const $a = $(a);
+    const href = $a.attr('href') || '';
+    if (!/^\/de\/jobs\/\d+/.test(href)) return;
+    totalAnchors++;
+
+    const title = $a.find('[data-label="Position"]').text().trim().replace(/\s+/g, ' ');
+    const type = $a.find('[data-label="Type"]').text().trim().replace(/\s+/g, ' ');
+    const location = $a.find('[data-label="Location"]').text().trim().replace(/\s+/g, ' ');
+    if (!title) return;
+    withDataLabel++;
+
+    if (!allowedTypes.has(type.toLowerCase())) return;
+    typeOk++;
+
+    if (!/münchen|munich/i.test(location)) return;
+    locationOk++;
+
+    const url = new URL(href, listingUrl).toString();
+    if (seen.has(url)) return;
+    seen.add(url);
+
+    const job: JobInput = {
+      company: 'Helsing',
+      title,
+      location: location || 'München',
+      url,
+      source_portal: 'helsing-own',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
+  });
+
+  if (out.length === 0) {
+    console.log(`  [debug Helsing] 0 Treffer:`);
+    console.log(`    HTML ${html.length} bytes · ${totalAnchors} <a href=/de/jobs/N> · ${withDataLabel} mit Titel · ${typeOk} Type ok · ${locationOk} München-Match`);
+  }
+  return out;
+}
+
 /* ---------------- Public registry ---------------- */
 
 export const scrapers: Scraper[] = [
@@ -557,6 +622,7 @@ export const scrapers: Scraper[] = [
   { company: 'IABG',            run: wrap('IABG',            scrapeIABG) },
   { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
+  { company: 'Helsing',         run: wrap('Helsing',         scrapeHelsing) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {
