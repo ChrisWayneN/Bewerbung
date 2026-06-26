@@ -14,3 +14,4 @@ playwright-report
 test-results
 db/jobs.db-shm
 db/jobs.db-wal
+src/config/scraper-secrets.json

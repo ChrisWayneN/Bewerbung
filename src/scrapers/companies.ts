@@ -18,6 +18,7 @@ import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeTypesense } from './portals/typesense';
 import { scrapeRecruitee } from './portals/recruitee';
+import { discoverTypesenseUrl } from './discoverTypesenseKey';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { extractInlineJson } from './inlineJson';
 
@@ -336,15 +337,21 @@ async function scrapeMTU(): Promise<JobInput[]> {
   });
 }
 
+// Hardcoded letzte bekannte URL als allerletzter Fallback. Wird nur genutzt
+// wenn HTML/JS-Discovery und scraper-secrets.json beide nichts liefern.
+const NEURA_TYPESENSE_FALLBACK = 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=Z0NhdmQxYnNPYnVJTDBVUHJCUWpNUU5jOEpWdGsrbE81RDgyV2Jrb2g2OD12ZDI1eyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D';
+
 async function scrapeNeura(): Promise<JobInput[]> {
-  // Neura nutzt das my-job-shop.com / talentsconnect Backend, das auf Typesense
-  // (Open-Source-Suchengine) basiert. Direkt die Multi-Search-API ansprechen.
-  // Der Scoped-Search-Key enthält am Ende einen base64-Filter:
-  //   tenant_id:=neura-robotics && backoffice_vanity:=karriere && status:=ACTIVE
-  // → der Key liefert von Haus aus nur Neura-Robotics Stellen.
+  // Selbstheilend: Discovery holt den aktuellen Scoped-Key aus dem HTML/JS-Bundle
+  // der Search-Seite, fällt sonst auf scraper-secrets.json oder den Fallback zurück.
+  const apiUrl = await discoverTypesenseUrl({
+    pageUrl: 'https://jobs.neura-robotics.com/search',
+    secretsKey: 'neuraTypesenseUrl',
+    hardcodedFallback: NEURA_TYPESENSE_FALLBACK,
+  });
   return scrapeTypesense({
     company: 'Neura Robotics',
-    apiUrl: 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=Z0NhdmQxYnNPYnVJTDBVUHJCUWpNUU5jOEpWdGsrbE81RDgyV2Jrb2g2OD12ZDI1eyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D',
+    apiUrl,
     searchBody: {
       searches: [{
         collection: 'offers',
