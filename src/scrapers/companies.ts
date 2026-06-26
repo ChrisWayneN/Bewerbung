@@ -292,19 +292,55 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // R&S rendert die Stellen-Liste als Accordion-Items:
+  // R&S rendert die Stellen-Liste als Accordion-Items, paginiert (~19/Seite).
   //   <div class="module-accordion accordion-disabled" data-view="accordion-item">
   //     <div id="jobboard-search-table-heading-N" class="title">Titel</div>
-  //     <div id="jobboard-search-table-content-N" class="content">… ggf. Apply-Link …</div>
   //   </div>
-  // URL filtert bereits auf Deutschland + München (assumeLocation true).
-  const listingUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
-  const html = await fetchText(listingUrl);
-  const $ = cheerio.load(html);
+  // URL filtert bereits auf Deutschland + München; wir iterieren ?page=N bis
+  // entweder keine neuen URLs mehr kommen oder ein hartes Limit erreicht ist.
+  const baseUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html';
+  const filterParams = '?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
   const out: JobInput[] = [];
   const seen = new Set<string>();
+  const maxPages = 30;
+  let totalAccordionsSeen = 0;
+  let lastHtmlLen = 0;
 
-  const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
+  for (let page = 1; page <= maxPages; page++) {
+    const url = page === 1 ? `${baseUrl}${filterParams}` : `${baseUrl}${filterParams}&page=${page}`;
+    let html: string;
+    try {
+      html = await fetchText(url);
+    } catch {
+      break;
+    }
+    lastHtmlLen = html.length;
+    const $ = cheerio.load(html);
+    const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
+    if (!items.length) break;
+    totalAccordionsSeen += items.length;
+    const addedBefore = out.length;
+    parseAccordions($, items, listingUrl(), out, seen);
+    const addedThisPage = out.length - addedBefore;
+    if (addedThisPage === 0 && page > 1) break;
+  }
+
+  if (out.length === 0) {
+    console.log(`  [debug R&S] 0 Treffer trotz Pagination:`);
+    console.log(`    HTML (letzte Seite) ${lastHtmlLen} bytes · Accordion-Items insgesamt: ${totalAccordionsSeen}`);
+  }
+  return out;
+
+  function listingUrl(): string { return `${baseUrl}${filterParams}`; }
+}
+
+function parseAccordions(
+  $: cheerio.CheerioAPI,
+  items: cheerio.Cheerio<any>,
+  listingUrl: string,
+  out: JobInput[],
+  seen: Set<string>,
+): void {
   items.each((_, el) => {
     const $item = $(el);
     const $title = $item.find('.title').first();
