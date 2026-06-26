@@ -218,15 +218,30 @@ export function getScraperStatuses(): { company: string; status: string; last_ru
   return getDb().prepare('SELECT * FROM scraper_status ORDER BY company').all() as any;
 }
 
-/** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Substring enthält (case-insensitive). */
+/** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Phrase enthält
+ *  (case-insensitive, Trenner-tolerant – „Software Engineer" matcht auch „Software-Engineer"). */
 export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number; samples: string[] } {
   if (!keywords.length) return { deleted: 0, samples: [] };
+  // Inline-Normalisierung, um zirkuläre Imports zu vermeiden.
+  const normalize = (s: string) => s.toLowerCase().replace(/[-_/\\]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const needles = keywords.map(normalize);
+
   const db = getDb();
-  const conditions = keywords.map(() => 'LOWER(title) LIKE ?').join(' OR ');
-  const params = keywords.map(k => `%${k.toLowerCase()}%`);
-  const sampleStmt = db.prepare(`SELECT title FROM jobs WHERE ${conditions} LIMIT 5`);
-  const samples = (sampleStmt.all(...params) as { title: string }[]).map(r => r.title);
-  const del = db.prepare(`DELETE FROM jobs WHERE ${conditions}`);
-  const r = del.run(...params);
-  return { deleted: Number(r.changes), samples };
+  const all = db.prepare('SELECT id, title FROM jobs').all() as { id: number; title: string }[];
+  const toDelete: number[] = [];
+  const samples: string[] = [];
+  for (const row of all) {
+    const hay = normalize(row.title ?? '');
+    if (needles.some(n => hay.includes(n))) {
+      toDelete.push(row.id);
+      if (samples.length < 5) samples.push(row.title);
+    }
+  }
+  if (!toDelete.length) return { deleted: 0, samples: [] };
+  const tx = db.transaction((ids: number[]) => {
+    const del = db.prepare('DELETE FROM jobs WHERE id = ?');
+    for (const id of ids) del.run(id);
+  });
+  tx(toDelete);
+  return { deleted: toDelete.length, samples };
 }

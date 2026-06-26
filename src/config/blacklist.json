@@ -1,5 +1,5 @@
 {
-  "_comment": "Stellen mit einem dieser Begriffe im Titel werden beim Scrapen rausgefiltert und beim nächsten Lauf aus der DB gelöscht. Case-insensitiv, Substring-Match. Mehrwort-Phrasen müssen als zusammenhängender Substring auftauchen: 'Software Engineer' matcht 'Senior Software Engineer', aber NICHT 'Hardware Engineer'.",
+  "_comment": "Stellen mit einem dieser Begriffe im Titel werden beim Scrapen rausgefiltert und beim nächsten Lauf aus der DB gelöscht. Case-insensitiv, Substring-Match. Trenner-tolerant: Bindestrich, Unterstrich, Slash zählen wie Leerzeichen. 'Software Engineer' matcht 'Senior Software Engineer' UND 'Software-Engineer', aber NICHT 'Hardware Engineer'.",
   "titleKeywords": [
     "Werkstudent",
     "Working Student",
@@ -7,6 +7,7 @@
     "Praktikant",
     "Abschlussarbeit",
     "Key Account",
+    "Account Manager",
     "Marketing",
     "Software Engineer"
   ]
