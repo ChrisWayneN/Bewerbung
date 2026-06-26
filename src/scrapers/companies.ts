@@ -292,44 +292,33 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // R&S rendert die Stellen-Liste als Accordion-Items, paginiert (~19/Seite).
-  //   <div class="module-accordion accordion-disabled" data-view="accordion-item">
-  //     <div id="jobboard-search-table-heading-N" class="title">Titel</div>
-  //   </div>
-  // URL filtert bereits auf Deutschland + München; wir iterieren ?page=N bis
-  // entweder keine neuen URLs mehr kommen oder ein hartes Limit erreicht ist.
+  // R&S rendert die Stellen-Liste als Accordion-Items, paginiert per &offset=N
+  // in 30er-Schritten (Lazy-Load beim Scrollen ruft dieselbe HTML-URL mit
+  // anderem offset auf). Pro Batch: 30 Items im DOM, Stopp wenn nichts Neues.
   const baseUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html';
   const filterParams = '?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  const maxPages = 30;
-  let totalAccordionsSeen = 0;
-  let lastHtmlLen = 0;
+  const batchSize = 30;
+  const maxOffset = 600;
 
-  for (let page = 1; page <= maxPages; page++) {
-    const url = page === 1 ? `${baseUrl}${filterParams}` : `${baseUrl}${filterParams}&page=${page}`;
+  for (let offset = 0; offset <= maxOffset; offset += batchSize) {
+    const url = offset === 0 ? `${baseUrl}${filterParams}` : `${baseUrl}${filterParams}&offset=${offset}`;
     let html: string;
     try {
       html = await fetchText(url);
     } catch {
       break;
     }
-    lastHtmlLen = html.length;
     const $ = cheerio.load(html);
     const items = $('div.module-accordion[data-view="accordion-item"], div.module-accordion.accordion-item');
-    console.log(`  [R&S] page ${page}: HTML ${html.length} bytes · ${items.length} Accordion-Items im DOM`);
     if (!items.length) break;
-    totalAccordionsSeen += items.length;
     const addedBefore = out.length;
     parseAccordions($, items, listingUrl(), out, seen);
-    const addedThisPage = out.length - addedBefore;
-    if (addedThisPage === 0 && page > 1) break;
+    const addedThisBatch = out.length - addedBefore;
+    if (addedThisBatch === 0) break;
   }
 
-  if (out.length === 0) {
-    console.log(`  [debug R&S] 0 Treffer trotz Pagination:`);
-    console.log(`    HTML (letzte Seite) ${lastHtmlLen} bytes · Accordion-Items insgesamt: ${totalAccordionsSeen}`);
-  }
   return out;
 
   function listingUrl(): string { return `${baseUrl}${filterParams}`; }
@@ -411,16 +400,6 @@ function parseAccordions(
     job.hash = hashJob(job);
     out.push(job);
   });
-
-  if (out.length === 0) {
-    console.log(`  [debug R&S] 0 Treffer:`);
-    console.log(`    HTML ${html.length} bytes`);
-    console.log(`    div.module-accordion: ${$('div.module-accordion').length}`);
-    console.log(`    [data-view="accordion-item"]: ${$('[data-view="accordion-item"]').length}`);
-    console.log(`    .title in accordion: ${$('div.module-accordion .title').length}`);
-  }
-
-  return out;
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
