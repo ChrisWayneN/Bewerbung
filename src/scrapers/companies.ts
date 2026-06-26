@@ -283,19 +283,62 @@ async function scrapeIABG(): Promise<JobInput[]> {
 }
 
 async function scrapeDiehl(): Promise<JobInput[]> {
-  // Diehl bietet eine vorgelilterte Listing-URL mit Geo-Coordinate-Radius.
-  // Wir nutzen München + 25 km Radius → deckt Ottobrunn, Gilching etc. ab.
-  // Da die URL bereits server-seitig filtert, können wir assumeLocation: true
-  // setzen und ersparen uns die context-basierte München-Erkennung.
-  return scrapeGenericHtml({
-    company: 'Diehl',
-    listingUrl: 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/?c=de&location=M%C3%BCnchen&radius=25&lat=48.1351253&lng=11.5819806',
-    hrefPattern: /\/career\/de\/jobs-bewerbung\/stellenboerse\/[a-z0-9-]+\/?$/i,
-    defaultLocation: 'München',
-    sourcePortal: 'diehl-html',
-    assumeLocation: true,
-    minTitleLen: 10,
+  // Diehl-spezifischer Selector basierend auf der bekannten DOM-Struktur:
+  //   <a class="distributor-link-item" href="...">
+  //     <h.. class="headline">Titel</h..>
+  //     <div class="item-header|item-footer|summary">... Standort ...</div>
+  //   </a>
+  // URL filtert server-seitig auf München + 25 km (deckt Ottobrunn, Gilching etc.).
+  const listingUrl = 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/?c=de&location=M%C3%BCnchen&radius=25&lat=48.1351253&lng=11.5819806';
+  const html = await fetchText(listingUrl);
+  const $ = cheerio.load(html);
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+
+  // Primärselektor: die Card-Klasse, die wir aus den Computed Styles kennen.
+  let cards = $('a.distributor-link-item, .distributor-link-item a[href]');
+  // Fallback: falls Klasse umbenannt, suche nach typischen Job-href-Mustern.
+  if (cards.length === 0) {
+    cards = $('a[href*="/jobs-bewerbung/"], a[href*="/stellenboerse/"]');
+  }
+
+  cards.each((_, a) => {
+    const $a = $(a);
+    const href = $a.attr('href');
+    if (!href) return;
+    if (/^#|^javascript:/.test(href)) return;
+    const $card = $a.is('a.distributor-link-item') ? $a : $a.closest('.distributor-link-item, article, li');
+    const title = ($card.find('.headline, h2, h3, h4').first().text() || $a.text()).trim().replace(/\s+/g, ' ');
+    if (!title || title.length < 5) return;
+    const locationCtx = $card.find('.item-header, .item-footer, .summary, [class*="location"], [class*="standort"]').text().trim().replace(/\s+/g, ' ');
+    const url = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
+    if (seen.has(url)) return;
+    seen.add(url);
+    // URL ist bereits Munich-gefiltert → assumeLocation
+    const job: JobInput = {
+      company: 'Diehl',
+      title,
+      location: locationCtx || 'München',
+      url,
+      source_portal: 'diehl-html',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
   });
+
+  if (out.length === 0) {
+    console.log(`  [debug Diehl] 0 Treffer trotz neuer URL+Selector:`);
+    console.log(`    HTML ${html.length} bytes`);
+    console.log(`    a.distributor-link-item: ${$('a.distributor-link-item').length}`);
+    console.log(`    .distributor-link-item: ${$('.distributor-link-item').length}`);
+    console.log(`    a[href*="/jobs-bewerbung/"]: ${$('a[href*="/jobs-bewerbung/"]').length}`);
+    console.log(`    a[href*="/stellenboerse/"]: ${$('a[href*="/stellenboerse/"]').length}`);
+    const samples: string[] = [];
+    $('a[href]').each((_, a) => { if (samples.length < 8) samples.push($(a).attr('href') || ''); });
+    console.log(`    Erste 8 hrefs: ${samples.join(' | ')}`);
+  }
+
+  return out;
 }
 
 async function scrapeMTU(): Promise<JobInput[]> {
