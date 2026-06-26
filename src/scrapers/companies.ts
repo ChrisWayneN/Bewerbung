@@ -292,17 +292,53 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 }
 
 async function scrapeRohdeSchwarz(): Promise<JobInput[]> {
-  // Listing-URL ist server-side gerendert (HTML enthält die Stellen direkt).
-  // URL filtert bereits auf Deutschland + München → assumeLocation true.
-  return scrapeGenericHtml({
-    company: 'Rohde & Schwarz',
-    listingUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen',
-    hrefPattern: /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i,
-    defaultLocation: 'München',
-    sourcePortal: 'rohde-html',
-    assumeLocation: true,
-    minTitleLen: 5,
-  });
+  // Listing-URL ist server-side gerendert, aber paginiert (Default ~5 pro Seite).
+  // R&S hat ~96 Stellen in München → wir iterieren ?page=N bis nichts Neues kommt.
+  const baseUrl = 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html';
+  const filterParams = '?term&filter%5BrsCountry%5D%5B%5D=Deutschland&filter%5BrsCity%5D%5B%5D=M%C3%BCnchen';
+  const hrefPattern = /\/karriere\/stellenangebote\/[a-z0-9-]+(?:_\d+)?\.html/i;
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  const maxPages = 40;
+
+  for (let page = 1; page <= maxPages; page++) {
+    const url = page === 1 ? `${baseUrl}${filterParams}` : `${baseUrl}${filterParams}&page=${page}`;
+    let html: string;
+    try {
+      html = await fetchText(url);
+    } catch {
+      break;
+    }
+    const $ = cheerio.load(html);
+    let added = 0;
+    $('a').each((_, a) => {
+      const $a = $(a);
+      const href = $a.attr('href');
+      if (!href) return;
+      if (!hrefPattern.test(href)) return;
+      const title = $a.text().trim().replace(/\s+/g, ' ');
+      if (!title || title.length < 5) return;
+      const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+      if (seen.has(fullUrl)) return;
+      seen.add(fullUrl);
+      const job: JobInput = {
+        company: 'Rohde & Schwarz',
+        title,
+        location: 'München',
+        url: fullUrl,
+        source_portal: 'rohde-html',
+      };
+      job.hash = hashJob(job);
+      out.push(job);
+      added++;
+    });
+    if (added === 0 && page > 1) break;
+  }
+
+  if (out.length === 0) {
+    console.log(`  [debug R&S] 0 Treffer trotz Pagination-Loop`);
+  }
+  return out;
 }
 
 async function scrapeIABG(): Promise<JobInput[]> {
