@@ -59,7 +59,7 @@ export async function scrapeGenericHtml(cfg: GenericHtmlConfig): Promise<JobInpu
     const job: JobInput = {
       company: cfg.company,
       title,
-      location: matchedArea ? (/[A-ZÄÖÜ][a-zäöüß-]+(?:\s+[A-ZÄÖÜ][a-zäöüß-]+)?/.exec(ctx)?.[0] ?? cfg.defaultLocation ?? null) : (cfg.defaultLocation ?? null),
+      location: cfg.defaultLocation ?? null,
       url,
       source_portal: cfg.sourcePortal,
     };
