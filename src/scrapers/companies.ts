@@ -11,7 +11,7 @@
 import * as cheerio from 'cheerio';
 import type { JobInput } from '../lib/db';
 import type { Scraper, ScrapeResult } from './base';
-import { hashJob, isMunichArea, fetchText } from './base';
+import { hashJob, isMunichArea, fetchText, fetchJson } from './base';
 import { scrapeWorkday } from './portals/workday';
 import { scrapePersonio } from './portals/personio';
 import { scrapeGenericHtml } from './portals/genericHtml';
@@ -43,7 +43,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
-  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'next-rsc',       status: '✅', note: 'Next.js mit Cloudflare. HTML-Endpoint blockt (429), wir fetchen den RSC-Stream mit Firefox-UA + RSC/Next.js-Headern. Build-Token in scraper-secrets.json (helsingRscToken).' },
+  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'helsing.ai-Seite (Next.js+Cloudflare) ist 429-blocked, aber die Daten kommen aus Greenhouse: boards-api.greenhouse.io/v1/boards/helsing/jobs. Sauberes JSON, kein Workaround.' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -543,22 +543,29 @@ async function scrapeNeura(): Promise<JobInput[]> {
   });
 }
 
-async function scrapeHelsing(): Promise<JobInput[]> {
-  // Helsing's HTML-Endpoint kassiert 429 via Cloudflare-TLS-Fingerprinting,
-  // selbst mit Browser-Headern. Der RSC-Endpoint (?_rsc=<buildToken>) wird
-  // mit Next.js-spezifischen Headern als SPA-internal navigation behandelt
-  // und durchgelassen. Der _rsc-Token ist eine Build-ID; ändert sich beim
-  // nächsten Helsing-Deploy → dann in scraper-secrets.json aktualisieren.
-  // Die gerenderten Job-Cards sind im Stream als verbatim-HTML enthalten,
-  // Cheerio kann sie direkt parsen.
-  const token = readHelsingRscToken();
-  const rscUrl = `https://helsing.ai/de/jobs?_rsc=${token}`;
-  const html = await fetchHelsingRsc(rscUrl);
-  const $ = cheerio.load(html);
-  const out: JobInput[] = [];
-  const seen = new Set<string>();
+interface GreenhouseJob {
+  id: number;
+  title: string;
+  absolute_url: string;
+  location?: { name?: string } | null;
+  offices?: Array<{ name?: string; location?: string }>;
+  departments?: Array<{ name?: string }>;
+  company_name?: string;
+  requisition_id?: string | null;
+}
 
-  const allowedTypes = new Set([
+async function scrapeHelsing(): Promise<JobInput[]> {
+  // Helsing's eigene Karriere-Seite (helsing.ai/de/jobs) ist Next.js hinter
+  // Cloudflare und fingerprinted Node's TLS-Handshake → 429. Aber die Daten
+  // kommen ohnehin aus Greenhouse: die RSC-Antwort enthält 1:1
+  // Greenhouse-Felder (requisition_id, parent_job_id, location.name).
+  // Direkt die öffentliche Greenhouse-Board-API anzapfen ist sauberer und
+  // unblockiert: kein Cloudflare, stabiles JSON-Schema.
+  const apiUrl = 'https://boards-api.greenhouse.io/v1/boards/helsing/jobs';
+  const data = await fetchJson<{ jobs: GreenhouseJob[] }>(apiUrl);
+  const jobs = data.jobs ?? [];
+
+  const allowedDepartments = new Set([
     'hardware engineering',
     'systems architecture',
     'deployed engineering',
@@ -566,125 +573,53 @@ async function scrapeHelsing(): Promise<JobInput[]> {
     'campaigns and programmes',
   ]);
 
-  let totalAnchors = 0;
-  let withDataLabel = 0;
-  let typeOk = 0;
-  let locationOk = 0;
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  let depFiltered = 0;
+  let locFiltered = 0;
 
-  $('a[href^="/de/jobs/"]').each((_, a) => {
-    const $a = $(a);
-    const href = $a.attr('href') || '';
-    if (!/^\/de\/jobs\/\d+/.test(href)) return;
-    totalAnchors++;
+  for (const j of jobs) {
+    const departments = (j.departments ?? []).map(d => (d.name ?? '').toLowerCase().trim());
+    if (!departments.some(d => allowedDepartments.has(d))) { depFiltered++; continue; }
 
-    const title = $a.find('[data-label="Position"]').text().trim().replace(/\s+/g, ' ');
-    const type = $a.find('[data-label="Type"]').text().trim().replace(/\s+/g, ' ');
-    const location = $a.find('[data-label="Location"]').text().trim().replace(/\s+/g, ' ');
-    if (!title) return;
-    withDataLabel++;
+    const locationNames = [
+      j.location?.name ?? '',
+      ...(j.offices ?? []).flatMap(o => [o.name ?? '', o.location ?? '']),
+    ].filter(Boolean);
+    const isMunich = locationNames.some(l => /münchen|munich/i.test(l));
+    if (!isMunich) { locFiltered++; continue; }
 
-    if (!allowedTypes.has(type.toLowerCase())) return;
-    typeOk++;
-
-    if (!/münchen|munich/i.test(location)) return;
-    locationOk++;
-
-    const url = new URL(href, 'https://helsing.ai').toString();
-    if (seen.has(url)) return;
+    // helsing.ai/de/jobs/{id} ist die Branding-URL. id matcht Greenhouse-id.
+    const url = `https://helsing.ai/de/jobs/${j.id}`;
+    if (seen.has(url)) continue;
     seen.add(url);
 
+    const munichLoc = locationNames.find(l => /münchen|munich/i.test(l)) ?? 'München';
     const job: JobInput = {
       company: 'Helsing',
-      title,
-      location: location || 'München',
+      title: j.title.trim().replace(/\s+/g, ' '),
+      location: munichLoc,
       url,
-      source_portal: 'helsing-rsc',
+      source_portal: 'helsing-greenhouse',
     };
     job.hash = hashJob(job);
     out.push(job);
-  });
+  }
 
   if (out.length === 0) {
     console.log(`  [debug Helsing] 0 Treffer:`);
-    console.log(`    RSC ${html.length} bytes · ${totalAnchors} <a href=/de/jobs/N> · ${withDataLabel} mit Titel · ${typeOk} Type ok · ${locationOk} München-Match`);
-    const probes = ['data-label', '/de/jobs/', '\\"href\\"', '"href":"', 'Hardware Engineer', 'Munich', 'München', '"Position"'];
-    for (const p of probes) {
-      const idx = html.indexOf(p);
-      if (idx < 0) { console.log(`    "${p}" NICHT gefunden`); continue; }
-      const ctx = html.slice(Math.max(0, idx - 40), idx + 120).replace(/\s+/g, ' ');
-      console.log(`    "${p}" @ ${idx}: …${ctx}…`);
+    console.log(`    Greenhouse lieferte ${jobs.length} Jobs gesamt · ${depFiltered} fielen am Department-Filter · ${locFiltered} am München-Filter`);
+    const sampleDeps = new Set<string>();
+    const sampleLocs = new Set<string>();
+    for (const j of jobs.slice(0, 50)) {
+      (j.departments ?? []).forEach(d => d.name && sampleDeps.add(d.name));
+      (j.offices ?? []).forEach(o => o.name && sampleLocs.add(o.name));
+      if (j.location?.name) sampleLocs.add(j.location.name);
     }
-    console.log(`    Falls Token abgelaufen: src/config/scraper-secrets.json → helsingRscToken aktualisieren.`);
+    if (sampleDeps.size) console.log(`    Bekannte Departments: ${Array.from(sampleDeps).slice(0, 15).join(' · ')}`);
+    if (sampleLocs.size) console.log(`    Bekannte Locations: ${Array.from(sampleLocs).slice(0, 15).join(' · ')}`);
   }
   return out;
-}
-
-function readHelsingRscToken(): string {
-  try {
-    // Lazy import um Reihenfolge-Probleme zu vermeiden
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const p = path.resolve(process.cwd(), 'src/config/scraper-secrets.json');
-    if (fs.existsSync(p)) {
-      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-      if (j.helsingRscToken) return String(j.helsingRscToken);
-    }
-  } catch { /* ignore */ }
-  return '0wuVtKlF3EDNwkjd';
-}
-
-async function fetchHelsingRsc(url: string): Promise<string> {
-  // Cloudflare fingerprinted Node's TLS-Handshake und kassiert 429, auch mit
-  // perfekten Browser-Headern. curl hat einen eigenen TLS-Fingerprint, der
-  // bei Helsing durchgeht (verifiziert: 56 KB Antwort). Wir spawnen curl als
-  // Subprocess. Auf Windows ist curl.exe seit Win10 1803 vorinstalliert,
-  // auf macOS/Linux ist curl ohnehin Standard.
-  const { spawn } = require('node:child_process') as typeof import('node:child_process');
-  const args = [
-    url,
-    '--compressed',
-    '--silent',
-    '--show-error',
-    '--max-time', '20',
-    '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
-    '-H', 'Accept: */*',
-    '-H', 'Accept-Language: en-US,en;q=0.9',
-    '-H', 'Referer: https://helsing.ai/de/jobs',
-    '-H', 'rsc: 1',
-    '-H', 'next-router-state-tree: %5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22de%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22jobs%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D',
-    '-H', 'next-url: /de/jobs',
-    '-H', 'Cookie: NEXT_LOCALE=de',
-    '-w', '\n[HTTP:%{http_code}]',
-  ];
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const chunks: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-    child.stdout.on('data', (b: Buffer) => chunks.push(b));
-    child.stderr.on('data', (b: Buffer) => errChunks.push(b));
-    child.on('error', (e: Error) => reject(new Error(`curl spawn failed: ${e.message}. Ist curl installiert?`)));
-    child.on('close', (code: number | null) => {
-      if (code !== 0) {
-        const err = Buffer.concat(errChunks).toString('utf8').trim();
-        reject(new Error(`curl exit ${code}: ${err}`));
-        return;
-      }
-      const body = Buffer.concat(chunks).toString('utf8');
-      // Status-Marker am Ende abtrennen ([HTTP:200] o.ä.)
-      const m = body.match(/\n\[HTTP:(\d+)\]$/);
-      if (!m) {
-        resolve(body);
-        return;
-      }
-      const status = Number(m[1]);
-      const content = body.slice(0, body.length - m[0].length);
-      if (status < 200 || status >= 300) {
-        reject(new Error(`HTTP ${status} for ${url}`));
-        return;
-      }
-      resolve(content);
-    });
-  });
 }
 
 /* ---------------- Public registry ---------------- */
