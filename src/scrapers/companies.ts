@@ -616,8 +616,13 @@ async function scrapeHelsing(): Promise<JobInput[]> {
       (j.offices ?? []).forEach(o => o.name && sampleLocs.add(o.name));
       if (j.location?.name) sampleLocs.add(j.location.name);
     }
-    if (sampleDeps.size) console.log(`    Bekannte Departments: ${Array.from(sampleDeps).slice(0, 15).join(' · ')}`);
+    console.log(`    Bekannte Departments: ${sampleDeps.size ? Array.from(sampleDeps).slice(0, 15).join(' · ') : '(leer)'}`);
     if (sampleLocs.size) console.log(`    Bekannte Locations: ${Array.from(sampleLocs).slice(0, 15).join(' · ')}`);
+    if (jobs.length > 0) {
+      const sample = jobs[0] as Record<string, unknown>;
+      console.log(`    Erste-Job-Keys: ${Object.keys(sample).join(', ')}`);
+      console.log(`    Erste-Job-Sample: ${JSON.stringify(sample).slice(0, 900)}`);
+    }
   }
   return out;
 }
