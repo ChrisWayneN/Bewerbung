@@ -43,7 +43,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
-  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'helsing.ai-Seite (Next.js+Cloudflare) ist 429-blocked, aber die Daten kommen aus Greenhouse: boards-api.greenhouse.io/v1/boards/helsing/jobs. Sauberes JSON, kein Workaround.' },
+  { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -557,31 +557,22 @@ interface GreenhouseJob {
 async function scrapeHelsing(): Promise<JobInput[]> {
   // Helsing's eigene Karriere-Seite (helsing.ai/de/jobs) ist Next.js hinter
   // Cloudflare und fingerprinted Node's TLS-Handshake → 429. Aber die Daten
-  // kommen ohnehin aus Greenhouse: die RSC-Antwort enthält 1:1
-  // Greenhouse-Felder (requisition_id, parent_job_id, location.name).
-  // Direkt die öffentliche Greenhouse-Board-API anzapfen ist sauberer und
-  // unblockiert: kein Cloudflare, stabiles JSON-Schema.
+  // kommen ohnehin aus Greenhouse. Direkt die öffentliche Greenhouse-Board-
+  // API anzapfen ist sauberer: kein Cloudflare, stabiles JSON-Schema.
+  //
+  // Hinweis zu Filtern: Helsing's Greenhouse-Board exposed KEIN
+  // department/category-Feld – die "Job-Familien", die auf der helsing.ai-
+  // Seite als Type-Filter angezeigt werden, kommen nicht über die API mit.
+  // Daher hier nur Location-Filter (München, alle Schreibweisen).
   const apiUrl = 'https://boards-api.greenhouse.io/v1/boards/helsing/jobs';
   const data = await fetchJson<{ jobs: GreenhouseJob[] }>(apiUrl);
   const jobs = data.jobs ?? [];
 
-  const allowedDepartments = new Set([
-    'hardware engineering',
-    'systems architecture',
-    'deployed engineering',
-    'campaigns & programmes',
-    'campaigns and programmes',
-  ]);
-
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  let depFiltered = 0;
   let locFiltered = 0;
 
   for (const j of jobs) {
-    const departments = (j.departments ?? []).map(d => (d.name ?? '').toLowerCase().trim());
-    if (!departments.some(d => allowedDepartments.has(d))) { depFiltered++; continue; }
-
     const locationNames = [
       j.location?.name ?? '',
       ...(j.offices ?? []).flatMap(o => [o.name ?? '', o.location ?? '']),
@@ -607,22 +598,7 @@ async function scrapeHelsing(): Promise<JobInput[]> {
   }
 
   if (out.length === 0) {
-    console.log(`  [debug Helsing] 0 Treffer:`);
-    console.log(`    Greenhouse lieferte ${jobs.length} Jobs gesamt · ${depFiltered} fielen am Department-Filter · ${locFiltered} am München-Filter`);
-    const sampleDeps = new Set<string>();
-    const sampleLocs = new Set<string>();
-    for (const j of jobs.slice(0, 50)) {
-      (j.departments ?? []).forEach(d => d.name && sampleDeps.add(d.name));
-      (j.offices ?? []).forEach(o => o.name && sampleLocs.add(o.name));
-      if (j.location?.name) sampleLocs.add(j.location.name);
-    }
-    console.log(`    Bekannte Departments: ${sampleDeps.size ? Array.from(sampleDeps).slice(0, 15).join(' · ') : '(leer)'}`);
-    if (sampleLocs.size) console.log(`    Bekannte Locations: ${Array.from(sampleLocs).slice(0, 15).join(' · ')}`);
-    if (jobs.length > 0) {
-      const sample = jobs[0] as Record<string, unknown>;
-      console.log(`    Erste-Job-Keys: ${Object.keys(sample).join(', ')}`);
-      console.log(`    Erste-Job-Sample: ${JSON.stringify(sample).slice(0, 900)}`);
-    }
+    console.log(`  [debug Helsing] 0 Treffer: Greenhouse lieferte ${jobs.length} Jobs, ${locFiltered} fielen am München-Filter.`);
   }
   return out;
 }
