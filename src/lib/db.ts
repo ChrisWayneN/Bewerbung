@@ -18,6 +18,12 @@ export function getDb(): Database.Database {
     const schema = readFileSync(SCHEMA_PATH, 'utf8');
     db.exec(schema);
   }
+  // Migration: rating-Spalte auf existierender jobs-Tabelle. CREATE TABLE
+  // IF NOT EXISTS fügt keine Spalten zu vorhandenen Tabellen hinzu.
+  const cols = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+  if (!cols.some(c => c.name === 'rating')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN rating TEXT");
+  }
   // Backfill: bestehende hidden=1-Jobs in hidden_urls übernehmen, falls
   // die Tabelle leer ist (z.B. nach Schema-Migration). Idempotent durch
   // INSERT OR IGNORE.
@@ -26,6 +32,15 @@ export function getDb(): Database.Database {
     db.exec(`
       INSERT OR IGNORE INTO hidden_urls (url, hidden_at)
       SELECT url, COALESCE(last_seen, first_seen) FROM jobs WHERE hidden = 1
+    `);
+  }
+  // Backfill rated_urls aus jobs.rating (für bestehende Markierungen).
+  const ratedCnt = db.prepare('SELECT COUNT(*) AS c FROM rated_urls').get() as { c: number };
+  if (ratedCnt.c === 0) {
+    db.exec(`
+      INSERT OR IGNORE INTO rated_urls (url, rating, rated_at)
+      SELECT url, rating, COALESCE(last_seen, first_seen) FROM jobs
+      WHERE rating IS NOT NULL AND rating != ''
     `);
   }
   _db = db;
@@ -46,7 +61,10 @@ export interface JobRow {
   last_seen: string;
   hidden: number;
   hash: string | null;
+  rating: string | null;
 }
+
+export type JobRating = 'A' | 'AB' | 'B';
 
 export interface JobInput {
   company: string;
@@ -71,11 +89,12 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
   const now = new Date().toISOString();
   const select = db.prepare('SELECT id, hash FROM jobs WHERE url = ?');
   const isHidden = db.prepare('SELECT 1 FROM hidden_urls WHERE url = ?');
+  const getRating = db.prepare('SELECT rating FROM rated_urls WHERE url = ?');
   const insert = db.prepare(`
     INSERT INTO jobs (company, title, location, url, source_portal, description_raw,
-      tasks, qualifications, first_seen, last_seen, hidden, hash)
+      tasks, qualifications, first_seen, last_seen, hidden, hash, rating)
     VALUES (@company, @title, @location, @url, @source_portal, @description_raw,
-      @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash)
+      @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash, @rating)
   `);
   const update = db.prepare(`
     UPDATE jobs SET title=@title, location=@location, source_portal=@source_portal,
@@ -106,7 +125,9 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
       };
       if (!existing) {
         const hidden = isHidden.get(j.url) ? 1 : 0;
-        const r = insert.run({ ...row, hidden });
+        const ratingRow = getRating.get(j.url) as { rating: string } | undefined;
+        const rating = ratingRow?.rating ?? null;
+        const r = insert.run({ ...row, hidden, rating });
         inserted++;
         ids.push(Number(r.lastInsertRowid));
       } else {
@@ -226,6 +247,26 @@ export function setHidden(id: number, hidden: boolean): void {
       db.prepare('INSERT OR IGNORE INTO hidden_urls (url, hidden_at) VALUES (?, ?)').run(row.url, new Date().toISOString());
     } else {
       db.prepare('DELETE FROM hidden_urls WHERE url = ?').run(row.url);
+    }
+  });
+  tx();
+}
+
+/** Setzt oder löscht (rating=null) die A/B-Bewertung einer Stelle.
+ *  Persistiert URL-stabil in rated_urls (überlebt Auto-Prune). */
+export function setRating(id: number, rating: JobRating | null): void {
+  const db = getDb();
+  const row = db.prepare('SELECT url FROM jobs WHERE id = ?').get(id) as { url: string } | undefined;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE jobs SET rating = ? WHERE id = ?').run(rating, id);
+    if (!row) return;
+    if (rating) {
+      db.prepare(`
+        INSERT INTO rated_urls (url, rating, rated_at) VALUES (?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET rating=excluded.rating, rated_at=excluded.rated_at
+      `).run(row.url, rating, new Date().toISOString());
+    } else {
+      db.prepare('DELETE FROM rated_urls WHERE url = ?').run(row.url);
     }
   });
   tx();

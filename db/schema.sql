@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   first_seen TEXT NOT NULL,
   last_seen TEXT NOT NULL,
   hidden INTEGER NOT NULL DEFAULT 0,
-  hash TEXT
+  hash TEXT,
+  rating TEXT          -- 'A' | 'AB' | 'B' | NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
@@ -40,6 +41,14 @@ CREATE TABLE IF NOT EXISTS scraper_status (
 CREATE TABLE IF NOT EXISTS hidden_urls (
   url TEXT PRIMARY KEY,
   hidden_at TEXT NOT NULL
+);
+
+-- URL-stabile A/B-Bewertung. Selbe Logik wie hidden_urls: überlebt
+-- Auto-Prune und Wiederauftauchen. rating ∈ {'A', 'AB', 'B'}.
+CREATE TABLE IF NOT EXISTS rated_urls (
+  url TEXT PRIMARY KEY,
+  rating TEXT NOT NULL,
+  rated_at TEXT NOT NULL
 );
 
 -- FTS5 virtual table for full-text search.

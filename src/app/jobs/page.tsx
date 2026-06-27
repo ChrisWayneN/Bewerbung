@@ -78,42 +78,52 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               <th className="px-3 py-2">Standort</th>
               <th className="px-3 py-2">Quelle</th>
               <th className="px-3 py-2">Import</th>
+              <th className="px-3 py-2">Bewertung</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-neutral-500">
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-neutral-500">
                 Keine Stellen. Lauf <code>npm run scrape</code> aus, um die DB zu befüllen.
               </td></tr>
             )}
-            {jobs.map(j => (
-              <tr key={j.id} className={'border-t border-neutral-200 dark:border-neutral-800 ' + (j.hidden ? 'opacity-50' : '')}>
-                <td className="px-3 py-2 font-medium">{j.company}</td>
-                <td className="px-3 py-2">
-                  <Link href={`/jobs/${j.id}`} className="hover:underline">
-                    {j.title}
-                  </Link>
-                  {j.is_new && (
-                    <span className="ml-2 inline-block text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded">
-                      neu
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-neutral-500">{j.location ?? '—'}</td>
-                <td className="px-3 py-2">
-                  <a href={j.url} target="_blank" rel="noreferrer" className="underline text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
-                    {j.source_portal ?? 'Link'} ↗
-                  </a>
-                </td>
-                <td className="px-3 py-2 text-neutral-500 whitespace-nowrap">
-                  {new Date(j.first_seen).toISOString().slice(0, 10)}
-                </td>
-                <td className="px-3 py-2">
-                  <HideButton id={j.id} hidden={!!j.hidden} />
-                </td>
-              </tr>
-            ))}
+            {jobs.map(j => {
+              const tint =
+                j.rating === 'A'  ? 'bg-emerald-50 dark:bg-emerald-900/20' :
+                j.rating === 'AB' ? 'bg-yellow-50 dark:bg-yellow-900/20'  :
+                j.rating === 'B'  ? 'bg-rose-50 dark:bg-rose-900/20'      : '';
+              return (
+                <tr key={j.id} className={'border-t border-neutral-200 dark:border-neutral-800 ' + tint + ' ' + (j.hidden ? 'opacity-50' : '')}>
+                  <td className="px-3 py-2 font-medium">{j.company}</td>
+                  <td className="px-3 py-2">
+                    <Link href={`/jobs/${j.id}`} className="hover:underline">
+                      {j.title}
+                    </Link>
+                    {j.is_new && (
+                      <span className="ml-2 inline-block text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded">
+                        neu
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-neutral-500">{j.location ?? '—'}</td>
+                  <td className="px-3 py-2">
+                    <a href={j.url} target="_blank" rel="noreferrer" className="underline text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+                      {j.source_portal ?? 'Link'} ↗
+                    </a>
+                  </td>
+                  <td className="px-3 py-2 text-neutral-500 whitespace-nowrap">
+                    {new Date(j.first_seen).toISOString().slice(0, 10)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <RatingButtons id={j.id} rating={j.rating} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <HideButton id={j.id} hidden={!!j.hidden} />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -130,5 +140,35 @@ function HideButton({ id, hidden }: { id: number; hidden: boolean }) {
         {hidden ? 'einblenden' : 'ausblenden'}
       </button>
     </form>
+  );
+}
+
+function RatingButtons({ id, rating }: { id: number; rating: string | null }) {
+  // Drei Pill-Buttons. Klick setzt das Rating, Klick auf den aktiven löscht es.
+  const opts: { value: 'A' | 'AB' | 'B'; label: string; active: string }[] = [
+    { value: 'A',  label: 'A',   active: 'bg-emerald-500/40 text-emerald-800 dark:text-emerald-200 font-semibold' },
+    { value: 'AB', label: 'A/B', active: 'bg-yellow-500/40 text-yellow-800 dark:text-yellow-200 font-semibold' },
+    { value: 'B',  label: 'B',   active: 'bg-rose-500/40 text-rose-800 dark:text-rose-200 font-semibold' },
+  ];
+  return (
+    <div className="flex gap-1">
+      {opts.map(o => {
+        const isActive = rating === o.value;
+        return (
+          <form key={o.value} action={`/api/jobs/${id}/rating`} method="post">
+            <input type="hidden" name="to" value={isActive ? '' : o.value} />
+            <button
+              className={'text-[10px] px-1.5 py-0.5 rounded border ' +
+                (isActive
+                  ? o.active + ' border-transparent'
+                  : 'text-neutral-400 border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800')}
+              title={isActive ? 'Bewertung zurücksetzen' : `Als ${o.label}-Stelle markieren`}
+            >
+              {o.label}
+            </button>
+          </form>
+        );
+      })}
+    </div>
   );
 }
