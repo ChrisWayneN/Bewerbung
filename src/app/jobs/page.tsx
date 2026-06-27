@@ -50,21 +50,24 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm"
           >
             <option value="">— alle —</option>
-            {Object.entries(COMPANY_CATEGORIES).map(([cat, members]) => (
-              <optgroup label={cat} key={cat}>
-                <option value={'kat:' + cat}>— Alle {cat} —</option>
-                {members.map(c => <option key={c} value={c}>{c}</option>)}
-              </optgroup>
-            ))}
+            {Object.entries(COMPANY_CATEGORIES).flatMap(([cat, members]) => [
+              // Kategorie selbst als anklickbare Option (filtert auf alle Firmen der Kategorie).
+              <option key={'kat:' + cat} value={'kat:' + cat}>{cat}</option>,
+              // Mitglieder eingerückt unter der Kategorie.
+              ...members.map(c => (
+                <option key={c} value={c}>{'   ' + c}</option>
+              )),
+            ])}
             {(() => {
               const categorised = new Set(Object.values(COMPANY_CATEGORIES).flat());
               const others = companies.filter(c => !categorised.has(c));
               if (!others.length) return null;
-              return (
-                <optgroup label="Sonstige" key="sonstige">
-                  {others.map(c => <option key={c} value={c}>{c}</option>)}
-                </optgroup>
-              );
+              return [
+                <option key="sonstige-label" disabled>Sonstige</option>,
+                ...others.map(c => (
+                  <option key={c} value={c}>{'   ' + c}</option>
+                )),
+              ];
             })()}
           </select>
         </div>
@@ -178,15 +181,15 @@ function SortArrows({ sp }: { sp: SearchParams }) {
   return (
     <span className="inline-flex flex-col text-[9px] leading-[9px]">
       <Link
-        href={buildHref(descActive ? undefined : 'rating-desc')}
-        title={descActive ? 'Sortierung zurücksetzen' : 'Sortieren A → A/B → B'}
-        className={descActive ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-300 dark:text-neutral-600 hover:text-neutral-600 dark:hover:text-neutral-300'}
-      >▼</Link>
-      <Link
         href={buildHref(ascActive ? undefined : 'rating-asc')}
         title={ascActive ? 'Sortierung zurücksetzen' : 'Sortieren B → A/B → A'}
         className={ascActive ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-300 dark:text-neutral-600 hover:text-neutral-600 dark:hover:text-neutral-300'}
       >▲</Link>
+      <Link
+        href={buildHref(descActive ? undefined : 'rating-desc')}
+        title={descActive ? 'Sortierung zurücksetzen' : 'Sortieren A → A/B → B'}
+        className={descActive ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-300 dark:text-neutral-600 hover:text-neutral-600 dark:hover:text-neutral-300'}
+      >▼</Link>
     </span>
   );
 }
