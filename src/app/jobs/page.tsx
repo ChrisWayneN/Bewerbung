@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { listJobs, listCompanies, getScraperStatuses, type JobSort } from '@/lib/db';
+import { listJobs, listCompanies, getScraperStatuses, getCompanyCounts, type JobSort } from '@/lib/db';
 import { COMPANY_CATEGORIES } from '@/lib/categories';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +26,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
     sort: parseSort(sp.sort),
   });
   const companies = listCompanies();
+  const counts = getCompanyCounts({ onlyNew: sp.neu === '1', includeHidden: sp.hidden === '1' });
+  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
   const statuses = getScraperStatuses();
 
   const newCount = jobs.filter(j => j.is_new).length;
@@ -49,15 +51,16 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             defaultValue={sp.company ?? ''}
             className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm"
           >
-            <option value="">— alle —</option>
-            {Object.entries(COMPANY_CATEGORIES).flatMap(([cat, members]) => [
-              // Kategorie selbst als anklickbare Option (filtert auf alle Firmen der Kategorie).
-              <option key={'kat:' + cat} value={'kat:' + cat}>{cat}</option>,
-              // Mitglieder eingerückt unter der Kategorie.
-              ...members.map(c => (
-                <option key={c} value={c}>{'   ' + c}</option>
-              )),
-            ])}
+            <option value="">{`— alle — (${totalCount})`}</option>
+            {Object.entries(COMPANY_CATEGORIES).flatMap(([cat, members]) => {
+              const catCount = members.reduce((s, c) => s + (counts[c] ?? 0), 0);
+              return [
+                <option key={'kat:' + cat} value={'kat:' + cat}>{`${cat} (${catCount})`}</option>,
+                ...members.map(c => (
+                  <option key={c} value={c}>{`   ${c} (${counts[c] ?? 0})`}</option>
+                )),
+              ];
+            })}
             {(() => {
               const categorised = new Set(Object.values(COMPANY_CATEGORIES).flat());
               const others = companies.filter(c => !categorised.has(c));
@@ -65,7 +68,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               return [
                 <option key="sonstige-label" disabled>Sonstige</option>,
                 ...others.map(c => (
-                  <option key={c} value={c}>{'   ' + c}</option>
+                  <option key={c} value={c}>{`   ${c} (${counts[c] ?? 0})`}</option>
                 )),
               ];
             })()}

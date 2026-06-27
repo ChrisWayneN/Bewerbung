@@ -310,6 +310,23 @@ export function listCompanies(): string[] {
   return rows.map(r => r.company);
 }
 
+/** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
+ *  onlyNew (seit letztem Import) und includeHidden. Wird im Firmen-
+ *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
+export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean } = {}): Record<string, number> {
+  const db = getDb();
+  const baseline = getPreviousImportTimestamp();
+  const where: string[] = [];
+  const params: Record<string, unknown> = { baseline };
+  if (!filters.includeHidden) where.push('j.hidden = 0');
+  if (filters.onlyNew) where.push('j.first_seen > @baseline');
+  const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const rows = db.prepare(`SELECT j.company AS company, COUNT(*) AS c FROM jobs j ${whereClause} GROUP BY j.company`).all(params) as Array<{ company: string; c: number }>;
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.company] = r.c;
+  return out;
+}
+
 export function getScraperStatuses(): { company: string; status: string; last_run: string; jobs_found: number; error: string | null }[] {
   return getDb().prepare('SELECT * FROM scraper_status ORDER BY company').all() as any;
 }
