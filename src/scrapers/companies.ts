@@ -490,23 +490,33 @@ async function scrapeDiehl(): Promise<JobInput[]> {
 }
 
 async function scrapeMTU(): Promise<JobInput[]> {
-  // MTU rendert die Job-Liste server-seitig in HTML.
-  // URL-Pfad ist /s/<category>/<location>/<level>/<target-group>/ –
-  // wir setzen Location=münchen_ger und target-group=professionals.
-  // Damit fallen Werkstudent/Praktika schon im Markup auf
-  // .jobs-list__item--filtered (ausgeblendet), wir überspringen die.
+  // MTU rendert ALLE Job-Items server-seitig ins HTML, unabhängig vom
+  // URL-Filter. Die .jobs-list__item--filtered-Klasse wird erst per JS
+  // beim Anwenden der UI-Filter gesetzt – im rohen SSR-HTML ist sie noch
+  // nicht da, also können wir nicht über die Klasse filtern.
+  //
+  // Verlässlich sind die data-Attribute jedes Items:
+  //   data-location="münchen_ger" oder "münchen_ger,starnberg_ger"
+  //   data-target-group="professionals" | "students" | …
+  // Darüber filtern wir clientseitig.
   const listingUrl = 'https://www.mtu.de/careers/online-job-market/s/all/m%C3%BCnchen_ger/all/professionals/';
   const html = await fetchText(listingUrl);
   const $ = cheerio.load(html);
   const out: JobInput[] = [];
   const seen = new Set<string>();
   let totalItems = 0;
-  let filteredOut = 0;
+  let skippedLoc = 0;
+  let skippedGroup = 0;
 
   $('div.jobs-list__item').each((_, el) => {
     totalItems++;
     const $el = $(el);
-    if ($el.hasClass('jobs-list__item--filtered')) { filteredOut++; return; }
+    const dataLoc = ($el.attr('data-location') ?? '').toLowerCase();
+    const dataGroup = ($el.attr('data-target-group') ?? '').toLowerCase();
+
+    // Mehrfach-Standorte sind komma-separiert ("münchen_ger,starnberg_ger").
+    if (!dataLoc.split(',').some(l => l.trim() === 'münchen_ger')) { skippedLoc++; return; }
+    if (dataGroup !== 'professionals') { skippedGroup++; return; }
 
     const title = ($el.attr('data-title') || $el.find('h3.jobs-list__title').first().text() || '')
       .trim().replace(/\s+/g, ' ');
@@ -529,7 +539,7 @@ async function scrapeMTU(): Promise<JobInput[]> {
   });
 
   if (out.length === 0) {
-    console.log(`  [debug MTU] 0 Treffer: ${totalItems} jobs-list__item-Divs gesehen, ${filteredOut} mit --filtered.`);
+    console.log(`  [debug MTU] 0 Treffer: ${totalItems} Items, ${skippedLoc} kein münchen_ger, ${skippedGroup} kein professionals.`);
   }
   return out;
 }
