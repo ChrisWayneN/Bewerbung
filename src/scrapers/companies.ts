@@ -38,7 +38,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
-  { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '⚠️', note: 'MTU Aero Engines – HTML-Liste' },
+  { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
@@ -490,16 +490,48 @@ async function scrapeDiehl(): Promise<JobInput[]> {
 }
 
 async function scrapeMTU(): Promise<JobInput[]> {
-  // MTU listet alle Standorte – wir parsen alle Job-Links, München-Filter über Kontext.
-  return scrapeGenericHtml({
-    company: 'MTU',
-    listingUrl: 'https://www.mtu.de/careers/online-job-market/',
-    hrefPattern: /\/(careers?|jobs?)\//i,
-    defaultLocation: 'München',
-    sourcePortal: 'mtu-html',
-    assumeLocation: false,
-    minTitleLen: 10,
+  // MTU rendert die Job-Liste server-seitig in HTML.
+  // URL-Pfad ist /s/<category>/<location>/<level>/<target-group>/ –
+  // wir setzen Location=münchen_ger und target-group=professionals.
+  // Damit fallen Werkstudent/Praktika schon im Markup auf
+  // .jobs-list__item--filtered (ausgeblendet), wir überspringen die.
+  const listingUrl = 'https://www.mtu.de/careers/online-job-market/s/all/m%C3%BCnchen_ger/all/professionals/';
+  const html = await fetchText(listingUrl);
+  const $ = cheerio.load(html);
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  let totalItems = 0;
+  let filteredOut = 0;
+
+  $('div.jobs-list__item').each((_, el) => {
+    totalItems++;
+    const $el = $(el);
+    if ($el.hasClass('jobs-list__item--filtered')) { filteredOut++; return; }
+
+    const title = ($el.attr('data-title') || $el.find('h3.jobs-list__title').first().text() || '')
+      .trim().replace(/\s+/g, ' ');
+    const href = $el.find('a.jobs-list__item_anchor').first().attr('href');
+    if (!title || !href) return;
+
+    const url = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
+    if (seen.has(url)) return;
+    seen.add(url);
+
+    const job: JobInput = {
+      company: 'MTU',
+      title,
+      location: 'München',
+      url,
+      source_portal: 'mtu-html',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
   });
+
+  if (out.length === 0) {
+    console.log(`  [debug MTU] 0 Treffer: ${totalItems} jobs-list__item-Divs gesehen, ${filteredOut} mit --filtered.`);
+  }
+  return out;
 }
 
 // Hardcoded letzte bekannte URL als allerletzter Fallback. Wird nur genutzt
