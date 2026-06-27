@@ -504,7 +504,7 @@ async function scrapeMTU(): Promise<JobInput[]> {
 
 // Hardcoded letzte bekannte URL als allerletzter Fallback. Wird nur genutzt
 // wenn HTML/JS-Discovery und scraper-secrets.json beide nichts liefern.
-const NEURA_TYPESENSE_FALLBACK = 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=Z0NhdmQxYnNPYnVJTDBVUHJCUWpNUU5jOEpWdGsrbE81RDgyV2Jrb2g2OD12ZDI1eyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D';
+const NEURA_TYPESENSE_FALLBACK = 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=LzVtSVA3dU5nK2Q5ck5oRklpTnBYdDhUaXZEMnFjY1hYaEdrU2hIQytBUT1sejlxeyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D';
 
 async function scrapeNeura(): Promise<JobInput[]> {
   // Selbstheilend: Discovery holt den aktuellen Scoped-Key aus dem HTML/JS-Bundle

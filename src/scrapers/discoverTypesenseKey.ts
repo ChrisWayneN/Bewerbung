@@ -56,19 +56,27 @@ export async function discoverTypesenseUrl(opts: DiscoverOptions): Promise<strin
     }
 
     // Strategie 2: JS-Bundles aus dem HTML extrahieren und durchsuchen.
-    // Limitiert auf max. 10 Skripte, um Discovery-Zeit zu begrenzen.
-    const scriptMatches = Array.from(html.matchAll(/<script[^>]*src=["']([^"']+)["']/g));
+    // Moderne SPAs (Vite/Nuxt/Vue) hängen die meisten Chunks als
+    // <link rel="modulepreload"> oder <link rel="preload" as="script"> ein,
+    // nicht als <script src>. Beides berücksichtigen.
+    const scriptMatches = Array.from(html.matchAll(/<script[^>]*\bsrc=["']([^"']+)["']/g));
+    const modulePreload = Array.from(html.matchAll(/<link[^>]*\brel=["'](?:modulepreload|preload)["'][^>]*\bhref=["']([^"']+)["']/g));
+    const modulePreloadAlt = Array.from(html.matchAll(/<link[^>]*\bhref=["']([^"']+)["'][^>]*\brel=["'](?:modulepreload|preload)["']/g));
     const baseOrigin = new URL(opts.pageUrl).origin;
-    const candidates = scriptMatches
-      .map(s => s[1])
-      .filter(src => /\.js(\?|$)/i.test(src))
+    const allRefs = new Set<string>([
+      ...scriptMatches.map(s => s[1]),
+      ...modulePreload.map(s => s[1]),
+      ...modulePreloadAlt.map(s => s[1]),
+    ]);
+    const candidates = Array.from(allRefs)
+      .filter(src => /\.js(\?|$|#)/i.test(src) || /\.mjs(\?|$|#)/i.test(src))
       .map(src => (src.startsWith('http') ? src : src.startsWith('/') ? baseOrigin + src : `${baseOrigin}/${src}`))
-      // Bevorzuge Nuxt-/App-Bundles
+      // Bevorzuge Bundles, die typischerweise API-Konstanten enthalten
       .sort((a, b) => {
-        const score = (u: string) => (/_nuxt|chunks?\/app|main|index|entry/.test(u) ? 0 : 1);
+        const score = (u: string) => (/search|api|typesense|offer|career|jobs|_nuxt|chunks?\/app|main|index|entry/.test(u) ? 0 : 1);
         return score(a) - score(b);
       })
-      .slice(0, 10);
+      .slice(0, 20);
 
     for (const url of candidates) {
       try {
