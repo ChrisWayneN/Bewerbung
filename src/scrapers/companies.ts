@@ -607,7 +607,14 @@ async function scrapeHelsing(): Promise<JobInput[]> {
   if (out.length === 0) {
     console.log(`  [debug Helsing] 0 Treffer:`);
     console.log(`    RSC ${html.length} bytes · ${totalAnchors} <a href=/de/jobs/N> · ${withDataLabel} mit Titel · ${typeOk} Type ok · ${locationOk} München-Match`);
-    console.log(`    Falls Token abgelaufen: src/config/scraper-secrets.json → helsingRscToken aktualisieren (Network-Tab → jobs?_rsc=… → Wert nach _rsc=).`);
+    const probes = ['data-label', '/de/jobs/', '\\"href\\"', '"href":"', 'Hardware Engineer', 'Munich', 'München', '"Position"'];
+    for (const p of probes) {
+      const idx = html.indexOf(p);
+      if (idx < 0) { console.log(`    "${p}" NICHT gefunden`); continue; }
+      const ctx = html.slice(Math.max(0, idx - 40), idx + 120).replace(/\s+/g, ' ');
+      console.log(`    "${p}" @ ${idx}: …${ctx}…`);
+    }
+    console.log(`    Falls Token abgelaufen: src/config/scraper-secrets.json → helsingRscToken aktualisieren.`);
   }
   return out;
 }
