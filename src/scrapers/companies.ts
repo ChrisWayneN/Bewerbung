@@ -627,36 +627,57 @@ function readHelsingRscToken(): string {
 }
 
 async function fetchHelsingRsc(url: string): Promise<string> {
-  // Bewusst NICHT fetchText – wir brauchen exakt das Firefox-Header-Set,
-  // ohne fetchText's Chrome-Defaults (sec-ch-ua-*, sec-fetch-dest=document).
-  // Cloudflare würde inkonsistente UA + Client-Hints sonst sofort blocken.
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 20_000);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'Referer': 'https://helsing.ai/de/jobs',
-        'RSC': '1',
-        'Next-Router-State-Tree': '%5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22de%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22jobs%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D',
-        'Next-Router-Prefetch': '1',
-        'Next-Url': '/de/jobs',
-        'Cookie': 'NEXT_LOCALE=de',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-        'Connection': 'keep-alive',
-      },
+  // Cloudflare fingerprinted Node's TLS-Handshake und kassiert 429, auch mit
+  // perfekten Browser-Headern. curl hat einen eigenen TLS-Fingerprint, der
+  // bei Helsing durchgeht (verifiziert: 56 KB Antwort). Wir spawnen curl als
+  // Subprocess. Auf Windows ist curl.exe seit Win10 1803 vorinstalliert,
+  // auf macOS/Linux ist curl ohnehin Standard.
+  const { spawn } = require('node:child_process') as typeof import('node:child_process');
+  const args = [
+    url,
+    '--compressed',
+    '--silent',
+    '--show-error',
+    '--max-time', '20',
+    '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
+    '-H', 'Accept: */*',
+    '-H', 'Accept-Language: en-US,en;q=0.9',
+    '-H', 'Referer: https://helsing.ai/de/jobs',
+    '-H', 'rsc: 1',
+    '-H', 'next-router-state-tree: %5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22de%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22jobs%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D',
+    '-H', 'next-url: /de/jobs',
+    '-H', 'Cookie: NEXT_LOCALE=de',
+    '-w', '\n[HTTP:%{http_code}]',
+  ];
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    child.stdout.on('data', (b: Buffer) => chunks.push(b));
+    child.stderr.on('data', (b: Buffer) => errChunks.push(b));
+    child.on('error', (e: Error) => reject(new Error(`curl spawn failed: ${e.message}. Ist curl installiert?`)));
+    child.on('close', (code: number | null) => {
+      if (code !== 0) {
+        const err = Buffer.concat(errChunks).toString('utf8').trim();
+        reject(new Error(`curl exit ${code}: ${err}`));
+        return;
+      }
+      const body = Buffer.concat(chunks).toString('utf8');
+      // Status-Marker am Ende abtrennen ([HTTP:200] o.ä.)
+      const m = body.match(/\n\[HTTP:(\d+)\]$/);
+      if (!m) {
+        resolve(body);
+        return;
+      }
+      const status = Number(m[1]);
+      const content = body.slice(0, body.length - m[0].length);
+      if (status < 200 || status >= 300) {
+        reject(new Error(`HTTP ${status} for ${url}`));
+        return;
+      }
+      resolve(content);
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-    return await res.text();
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
 /* ---------------- Public registry ---------------- */
