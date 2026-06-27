@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { listJobs, listCompanies, getScraperStatuses } from '@/lib/db';
+import { listJobs, listCompanies, getScraperStatuses, type JobSort } from '@/lib/db';
+import { COMPANY_CATEGORIES } from '@/lib/categories';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,11 @@ interface SearchParams {
   company?: string;
   neu?: string;
   hidden?: string;
+  sort?: string;
+}
+
+function parseSort(v: string | undefined): JobSort | undefined {
+  return v === 'rating-desc' || v === 'rating-asc' ? v : undefined;
 }
 
 export default async function JobsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -17,6 +23,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
     company: sp.company,
     onlyNew: sp.neu === '1',
     includeHidden: sp.hidden === '1',
+    sort: parseSort(sp.sort),
   });
   const companies = listCompanies();
   const statuses = getScraperStatuses();
@@ -43,7 +50,26 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm"
           >
             <option value="">— alle —</option>
-            {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            <optgroup label="Kategorien">
+              {Object.keys(COMPANY_CATEGORIES).map(c => (
+                <option key={'kat:' + c} value={'kat:' + c}>{c}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Firmen">
+              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs uppercase tracking-wider text-neutral-500 mb-1">Sortierung</label>
+          <select
+            name="sort"
+            defaultValue={sp.sort ?? ''}
+            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm"
+          >
+            <option value="">Neueste zuerst</option>
+            <option value="rating-desc">Bewertung A → A/B → B</option>
+            <option value="rating-asc">Bewertung B → A/B → A</option>
           </select>
         </div>
         <label className="flex items-center gap-2 text-sm pb-2">
@@ -57,7 +83,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         <button className="rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-medium">
           Anwenden
         </button>
-        {(sp.q || sp.company || sp.neu || sp.hidden) && (
+        {(sp.q || sp.company || sp.neu || sp.hidden || sp.sort) && (
           <Link href="/jobs" className="text-sm underline text-neutral-500 pb-2">zurücksetzen</Link>
         )}
       </form>

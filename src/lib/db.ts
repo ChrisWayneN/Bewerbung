@@ -174,11 +174,15 @@ export function getPreviousImportTimestamp(): string {
   return row?.run_at ?? '1970-01-01T00:00:00.000Z';
 }
 
+export type JobSort = 'rating-desc' | 'rating-asc';
+
 export interface ListFilters {
   q?: string;
+  /** Einzel-Firmenname ODER "kat:<Kategoriename>" für eine Gruppe. */
   company?: string;
   onlyNew?: boolean;
   includeHidden?: boolean;
+  sort?: JobSort;
 }
 
 export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean })[] {
@@ -189,10 +193,27 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
 
   if (!filters.includeHidden) where.push('j.hidden = 0');
   if (filters.company) {
-    where.push('j.company = @company');
-    params.company = filters.company;
+    if (filters.company.startsWith('kat:')) {
+      // Lazy import, damit das DB-Modul keinen harten Import auf die
+      // Kategorie-Liste hat (die wird auch im UI gebraucht).
+      const { COMPANY_CATEGORIES } = require('./categories') as typeof import('./categories');
+      const cat = filters.company.slice(4);
+      const list = COMPANY_CATEGORIES[cat];
+      if (list && list.length > 0) {
+        const ph = list.map((_, i) => `@cat${i}`).join(',');
+        where.push(`j.company IN (${ph})`);
+        list.forEach((c, i) => { params[`cat${i}`] = c; });
+      } else {
+        where.push('1=0'); // unbekannte Kategorie → leeres Ergebnis
+      }
+    } else {
+      where.push('j.company = @company');
+      params.company = filters.company;
+    }
   }
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
+
+  const orderBy = buildOrderBy(filters.sort);
 
   let sql: string;
   if (filters.q && filters.q.trim()) {
@@ -205,27 +226,38 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
         FROM jobs j
         JOIN jobs_fts f ON f.rowid = j.id
         WHERE jobs_fts MATCH @q ${where.length ? 'AND ' + where.join(' AND ') : ''}
-        ORDER BY j.first_seen DESC, j.id DESC
+        ${orderBy}
         LIMIT 1000
       `;
     } else {
-      sql = baseSelect(where, baseline);
+      sql = baseSelect(where, orderBy);
     }
   } else {
-    sql = baseSelect(where, baseline);
+    sql = baseSelect(where, orderBy);
   }
   const rows = db.prepare(sql).all(params) as (JobRow & { is_new: number })[];
   return rows.map(r => ({ ...r, is_new: !!r.is_new }));
 }
 
-function baseSelect(where: string[], _baseline: string): string {
+function baseSelect(where: string[], orderBy: string): string {
   return `
     SELECT j.*, (j.first_seen > @baseline) AS is_new
     FROM jobs j
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY j.first_seen DESC, j.id DESC
+    ${orderBy}
     LIMIT 1000
   `;
+}
+
+function buildOrderBy(sort: JobSort | undefined): string {
+  // Stellen ohne Rating landen immer am Ende (Priorität 9 in der CASE).
+  if (sort === 'rating-desc') {
+    return "ORDER BY CASE j.rating WHEN 'A' THEN 1 WHEN 'AB' THEN 2 WHEN 'B' THEN 3 ELSE 9 END ASC, j.first_seen DESC, j.id DESC";
+  }
+  if (sort === 'rating-asc') {
+    return "ORDER BY CASE j.rating WHEN 'B' THEN 1 WHEN 'AB' THEN 2 WHEN 'A' THEN 3 ELSE 9 END ASC, j.first_seen DESC, j.id DESC";
+  }
+  return 'ORDER BY j.first_seen DESC, j.id DESC';
 }
 
 export function getJob(id: number): (JobRow & { is_new: boolean }) | null {
