@@ -182,6 +182,8 @@ export interface ListFilters {
   company?: string;
   onlyNew?: boolean;
   includeHidden?: boolean;
+  /** Nur A-bewertete Stellen anzeigen. */
+  onlyA?: boolean;
   sort?: JobSort;
 }
 
@@ -212,6 +214,7 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
     }
   }
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
+  if (filters.onlyA) where.push("j.rating = 'A'");
 
   const orderBy = buildOrderBy(filters.sort);
 
@@ -313,13 +316,14 @@ export function listCompanies(): string[] {
 /** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
  *  onlyNew (seit letztem Import) und includeHidden. Wird im Firmen-
  *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
-export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean } = {}): Record<string, number> {
+export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; onlyA?: boolean } = {}): Record<string, number> {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const where: string[] = [];
   const params: Record<string, unknown> = { baseline };
   if (!filters.includeHidden) where.push('j.hidden = 0');
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
+  if (filters.onlyA) where.push("j.rating = 'A'");
   const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const rows = db.prepare(`SELECT j.company AS company, COUNT(*) AS c FROM jobs j ${whereClause} GROUP BY j.company`).all(params) as Array<{ company: string; c: number }>;
   const out: Record<string, number> = {};

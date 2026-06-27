@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { listJobs, listCompanies, getScraperStatuses, getCompanyCounts, type JobSort } from '@/lib/db';
 import { COMPANY_CATEGORIES } from '@/lib/categories';
+import { AutoSubmitCheckbox } from './AutoSubmitCheckbox';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,6 +10,7 @@ interface SearchParams {
   company?: string;
   neu?: string;
   hidden?: string;
+  a?: string;
   sort?: string;
 }
 
@@ -23,10 +25,11 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
     company: sp.company,
     onlyNew: sp.neu === '1',
     includeHidden: sp.hidden === '1',
+    onlyA: sp.a === '1',
     sort: parseSort(sp.sort),
   });
   const companies = listCompanies();
-  const counts = getCompanyCounts({ onlyNew: sp.neu === '1', includeHidden: sp.hidden === '1' });
+  const counts = getCompanyCounts({ onlyNew: sp.neu === '1', includeHidden: sp.hidden === '1', onlyA: sp.a === '1' });
   const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
   const statuses = getScraperStatuses();
 
@@ -76,18 +79,13 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         </div>
         {/* Sortierung wird über die Spaltenkopf-Pfeile bei "Bewertung" gesteuert, nicht hier. */}
         <input type="hidden" name="sort" value={sp.sort ?? ''} />
-        <label className="flex items-center gap-2 text-sm pb-2">
-          <input type="checkbox" name="neu" value="1" defaultChecked={sp.neu === '1'} />
-          Nur Neue
-        </label>
-        <label className="flex items-center gap-2 text-sm pb-2">
-          <input type="checkbox" name="hidden" value="1" defaultChecked={sp.hidden === '1'} />
-          Inkl. Ausgeblendete
-        </label>
+        <AutoSubmitCheckbox name="neu" value="1" defaultChecked={sp.neu === '1'}>Nur Neue</AutoSubmitCheckbox>
+        <AutoSubmitCheckbox name="hidden" value="1" defaultChecked={sp.hidden === '1'}>Inkl. Ausgeblendete</AutoSubmitCheckbox>
+        <AutoSubmitCheckbox name="a" value="1" defaultChecked={sp.a === '1'}>Nur A-Bewertung</AutoSubmitCheckbox>
         <button className="rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-medium">
           Anwenden
         </button>
-        {(sp.q || sp.company || sp.neu || sp.hidden || sp.sort) && (
+        {(sp.q || sp.company || sp.neu || sp.hidden || sp.a || sp.sort) && (
           <Link href="/jobs" className="text-sm underline text-neutral-500 pb-2">zurücksetzen</Link>
         )}
       </form>
@@ -175,6 +173,7 @@ function SortArrows({ sp }: { sp: SearchParams }) {
     if (sp.company) p.set('company', sp.company);
     if (sp.neu) p.set('neu', sp.neu);
     if (sp.hidden) p.set('hidden', sp.hidden);
+    if (sp.a) p.set('a', sp.a);
     if (target) p.set('sort', target);
     const qs = p.toString();
     return qs ? `/jobs?${qs}` : '/jobs';
