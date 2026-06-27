@@ -31,7 +31,7 @@ export interface CompanyMeta {
 }
 
 export const COMPANIES: CompanyMeta[] = [
-  { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'phenom/own',     status: '⚠️', note: 'Eigenes Portal jobs.knds.de – Phenom-ähnlich. HTML-Fallback.' },
+  { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'recruiting-solutions', status: '✅', note: 'recruiting-solutions.org (Azure Cog. Search) – POST production.api.recruiting-solutions.org/search mit customerId=knds-prod und Public x-api-key.' },
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html', portal: 'paulsjob-html',  status: '✅', note: 'paulsjob.ai-Backend, server-rendered. Pagination per &offset=N in 30er-Schritten (Lazy-Load).' },
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet) – Liste unter showJobOfferList.do, <tr class=joboffer>' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
@@ -204,91 +204,93 @@ async function scrapeSiemens(): Promise<JobInput[]> {
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
-  // jobs.knds.de ist eine SPA (recruiting-solutions.org / SAP CSB). 31 kb HTML-
-  // Shell → keine Job-Links im Markup. Wir probieren bekannte JSON-Endpoints,
-  // die solche Career-Portale typischerweise haben, dann Sitemap, dann Inline-JSON.
+  // KNDS' Portal jobs.knds.de ist eine SPA auf recruiting-solutions.org
+  // (Azure Cognitive Search Backend). Public-Key-Auth: der x-api-key ist
+  // ein Frontend-Search-Key, kein Geheimnis – wird vom Browser an alle
+  // Besucher ausgeliefert. Falls KNDS ihn rotiert: neuen Key aus DevTools
+  // (Network → POST production.api.recruiting-solutions.org/search →
+  // Anfragekopfzeilen → x-api-key).
+  const apiUrl = 'https://production.api.recruiting-solutions.org/search';
+  const headers: Record<string, string> = {
+    'accept': '*/*',
+    'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
+    'content-type': 'application/json;charset=UTF-8',
+    'customerId': 'knds-prod',
+    'x-api-key': 'pk_knds-prod_vQoHZUfidPgNIsDClPNzfoBaJvKnKpXCNtxVmSctXTwKEYCbjNuFAnAKcVoJpdpjEpuLDuxCTazaJMEODATzaVvrzWwaZNnb',
+    'internal': 'false',
+    'privateJobBoard': 'false',
+    'origin': 'https://jobs.knds.de',
+    'referer': 'https://jobs.knds.de/',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
+  };
+  // Azure Cognitive Search OData: top=500 reicht (KNDS hat ~280 Stellen).
+  // Kein Server-side Location-Filter – wir filtern client-side über
+  // isMunichArea, was tolerant gegenüber Schreibvarianten und Vororten ist.
+  const body = {
+    count: true,
+    facets: [],
+    filter: 'datePosted lt 2099-12-31T00:00:00.000Z',
+    search: '*',
+    skip: 0,
+    top: 500,
+  };
+  const res = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`KNDS HTTP ${res.status}`);
+  const data: Record<string, unknown> = await res.json();
+  const items: Record<string, unknown>[] = ((data.value ?? data.results ?? data.items ?? data.jobs) as Record<string, unknown>[]) ?? [];
+
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  const debug: string[] = [];
+  let munichMatches = 0;
 
-  // (1) Bekannte JSON-Endpoint-Muster für SAP CSB / recruiting-solutions.org.
-  const apiCandidates = [
-    'https://jobs.knds.de/api/jobs?locale=de_DE&pageSize=200&currentPage=1',
-    'https://jobs.knds.de/api/v1/jobs?locale=de_DE&pageSize=200',
-    'https://jobs.knds.de/content/api/search?locale=de_DE&pageSize=200&currentPage=1',
-    'https://jobs.knds.de/services/jobsearch?locale=de_DE&pageSize=200',
-    'https://jobs.knds.de/jobs.json?locale=de_DE',
-  ];
-  for (const url of apiCandidates) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          accept: 'application/json',
-          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        },
-      });
-      debug.push(`  API ${url} → ${res.status}`);
-      if (!res.ok) continue;
-      const text = await res.text();
-      let data: any;
-      try { data = JSON.parse(text); } catch { continue; }
-      const arr: any[] = data?.jobs ?? data?.results ?? data?.items ?? data?.content ?? [];
-      if (!Array.isArray(arr) || arr.length === 0) continue;
-      for (const it of arr) {
-        const title = it.title || it.jobTitle || it.name;
-        const location = it.location || it.locations || it.city || it.workLocation || '';
-        const id = it.id || it.jobId || it.requisitionId;
-        const href = it.url || it.applyUrl || it.detailUrl || (id ? `https://jobs.knds.de/job-invite/${id}/` : null);
-        if (!title || !href) continue;
-        if (!isMunichArea(typeof location === 'string' ? location : JSON.stringify(location))) continue;
-        if (seen.has(href)) continue;
-        seen.add(href);
-        const job: JobInput = {
-          company: 'KNDS',
-          title,
-          location: typeof location === 'string' ? location : 'München',
-          url: href,
-          source_portal: 'knds-api',
-        };
-        job.hash = hashJob(job);
-        out.push(job);
-      }
-      if (out.length) return out;
-    } catch (e) {
-      debug.push(`  API ${url} → ${(e as Error).message}`);
+  for (const it of items) {
+    const title = String((it.title ?? it.jobTitle ?? it.name ?? '') as string).trim();
+    if (!title) continue;
+
+    // addresses ist eine Collection von {name, ...}. Mehrere Standorte je Stelle möglich.
+    const addresses = Array.isArray(it.addresses) ? it.addresses as Array<Record<string, unknown>> : [];
+    const locArr = addresses.map(a => String(a.name ?? a.city ?? '')).filter(Boolean);
+    const locationStr = locArr.join(', ');
+    if (!isMunichArea(locationStr)) continue;
+    munichMatches++;
+
+    const id = it.id ?? it.jobId ?? it.requisitionId ?? it.externalId;
+    let url: string;
+    const navigateLink = (it.url ?? it.applyUrl ?? it.detailUrl ?? it.navigateLink ?? it.permalink) as string | undefined;
+    if (typeof navigateLink === 'string' && navigateLink.length > 0) {
+      url = navigateLink.startsWith('http') ? navigateLink : new URL(navigateLink, 'https://jobs.knds.de').toString();
+    } else if (id != null) {
+      url = `https://jobs.knds.de/content/job/${id}/`;
+    } else {
+      continue;
     }
-  }
+    if (seen.has(url)) continue;
+    seen.add(url);
 
-  // (2) Sitemap-Fallback
-  try {
-    const sm = await fetchText('https://jobs.knds.de/sitemap.xml', { headers: { accept: 'application/xml' } });
-    debug.push(`  sitemap.xml: ${sm.length} bytes`);
-    const urls = Array.from(sm.matchAll(/<loc>([^<]+)<\/loc>/g)).map(m => m[1]).filter(u => /job-invite|\/job\//.test(u));
-    if (urls.length) {
-      debug.push(`  sitemap: ${urls.length} job URLs gefunden`);
-      // Sitemap liefert nur URLs, kein Standort. Wir können nicht ohne weitere Calls auf München filtern.
-      // → Verzicht aus Performance-Gründen; nur loggen.
-    }
-  } catch (e) {
-    debug.push(`  sitemap.xml → ${(e as Error).message}`);
+    const munichLoc = locArr.find(l => /münchen|munich/i.test(l)) ?? 'München';
+    const job: JobInput = {
+      company: 'KNDS',
+      title,
+      location: munichLoc,
+      url,
+      source_portal: 'knds-rs',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
   }
-
-  // (3) Inline-JSON-Slots im HTML-Shell loggen (für nächste Diagnose-Runde)
-  let shellHtml = '';
-  try {
-    shellHtml = await fetchText('https://jobs.knds.de/content/search/?locale=de_DE&pageSize=200');
-  } catch { /* ignore */ }
 
   if (out.length === 0) {
-    console.log(`  [debug KNDS] 0 Treffer (alle API/Sitemap-Strategien fehlgeschlagen):`);
-    debug.forEach(d => console.log(d));
-    if (shellHtml) {
-      const slots = extractInlineJson(shellHtml);
-      console.log(`  Shell-HTML: ${shellHtml.length} bytes, inline-JSON-Slots: ${slots.map(s => s.source).join(', ') || 'keine'}`);
+    console.log(`  [debug KNDS] 0 Treffer:`);
+    console.log(`    API lieferte ${items.length} Stellen · ${munichMatches} München-Match · keine URL → 0 Output`);
+    if (items.length > 0) {
+      const sample = items[0];
+      console.log(`    Erste-Stelle-Keys: ${Object.keys(sample).join(', ')}`);
+      console.log(`    Erste-Stelle: ${JSON.stringify(sample).slice(0, 700)}`);
+    } else {
+      console.log(`    Antwort-Keys: ${Object.keys(data).join(', ')}`);
+      console.log(`    Antwort-Auszug: ${JSON.stringify(data).slice(0, 400)}`);
     }
   }
-
   return out;
 }
 
