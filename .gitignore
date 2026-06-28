@@ -12,5 +12,6 @@ next-env.d.ts
 .cache
 playwright-report
 test-results
+db/jobs.db
 db/jobs.db-shm
 db/jobs.db-wal
