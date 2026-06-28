@@ -44,6 +44,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
   { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
+  { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-eu', status: '✅', note: 'boards-api.eu.greenhouse.io/v1/boards/isaraerospace/jobs. Filter per Office-ID 4008032101 (München).' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -592,7 +593,7 @@ interface GreenhouseJob {
   title: string;
   absolute_url: string;
   location?: { name?: string } | null;
-  offices?: Array<{ name?: string; location?: string }>;
+  offices?: Array<{ id?: number; name?: string; location?: string }>;
   departments?: Array<{ name?: string }>;
   company_name?: string;
   requisition_id?: string | null;
@@ -647,6 +648,61 @@ async function scrapeHelsing(): Promise<JobInput[]> {
   return out;
 }
 
+async function scrapeIsarAerospace(): Promise<JobInput[]> {
+  // Isar Aerospace nutzt Greenhouse mit EU-Tenant (job-boards.eu.greenhouse.io).
+  // Karriere-URL filtert per Query offices[]=4008032101 — das ist der München-Office.
+  // Wir holen alle Stellen und filtern lokal nach Office-ID; fällt das (z.B. weil
+  // die API offices ohne id liefert) durch, greift der Munich-Substring-Filter.
+  const MUNICH_OFFICE_ID = 4008032101;
+  const apiUrl = 'https://boards-api.eu.greenhouse.io/v1/boards/isaraerospace/jobs';
+  const data = await fetchJson<{ jobs: GreenhouseJob[] }>(apiUrl);
+  const jobs = data.jobs ?? [];
+
+  const out: JobInput[] = [];
+  const seen = new Set<string>();
+  let officeFiltered = 0;
+  let locFiltered = 0;
+
+  for (const j of jobs) {
+    const officeIds = (j.offices ?? []).map(o => o.id).filter((x): x is number => typeof x === 'number');
+    const officeMatchPossible = officeIds.length > 0;
+    const officeHit = officeIds.includes(MUNICH_OFFICE_ID);
+
+    const locationNames = [
+      j.location?.name ?? '',
+      ...(j.offices ?? []).flatMap(o => [o.name ?? '', o.location ?? '']),
+    ].filter(Boolean);
+    const isMunich = locationNames.some(l => isMunichArea(l));
+
+    if (officeMatchPossible) {
+      if (!officeHit) { officeFiltered++; continue; }
+    } else if (!isMunich) {
+      locFiltered++;
+      continue;
+    }
+
+    const url = j.absolute_url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+
+    const munichLoc = locationNames.find(l => isMunichArea(l)) ?? 'München';
+    const job: JobInput = {
+      company: 'Isar Aerospace',
+      title: j.title.trim().replace(/\s+/g, ' '),
+      location: munichLoc,
+      url,
+      source_portal: 'greenhouse-eu',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
+  }
+
+  if (out.length === 0) {
+    console.log(`  [debug Isar Aerospace] 0 Treffer: Greenhouse lieferte ${jobs.length} Jobs, ${officeFiltered} fielen am Office-Filter, ${locFiltered} am Munich-Fallback.`);
+  }
+  return out;
+}
+
 /* ---------------- Public registry ---------------- */
 
 export const scrapers: Scraper[] = [
@@ -663,6 +719,7 @@ export const scrapers: Scraper[] = [
   { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
   { company: 'Helsing',         run: wrap('Helsing',         scrapeHelsing) },
+  { company: 'Isar Aerospace',  run: wrap('Isar Aerospace',  scrapeIsarAerospace) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {
