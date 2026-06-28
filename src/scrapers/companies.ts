@@ -44,7 +44,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
   { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
-  { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-eu', status: '✅', note: 'boards-api.eu.greenhouse.io/v1/boards/isaraerospace/jobs. Filter per Office-ID 4008032101 (München).' },
+  { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-html-eu', status: '✅', note: 'Greenhouse-Job-Board (job-boards.eu.greenhouse.io), SSR-HTML mit Pagination ?page=N und Server-Filter ?offices[]=4008032101. Die klassische boards-api kennt das Board nicht.' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -649,56 +649,72 @@ async function scrapeHelsing(): Promise<JobInput[]> {
 }
 
 async function scrapeIsarAerospace(): Promise<JobInput[]> {
-  // Isar Aerospace nutzt Greenhouse mit EU-Tenant (job-boards.eu.greenhouse.io).
-  // Karriere-URL filtert per Query offices[]=4008032101 — das ist der München-Office.
-  // Wir holen alle Stellen und filtern lokal nach Office-ID; fällt das (z.B. weil
-  // die API offices ohne id liefert) durch, greift der Munich-Substring-Filter.
-  const MUNICH_OFFICE_ID = 4008032101;
-  const apiUrl = 'https://boards-api.eu.greenhouse.io/v1/boards/isaraerospace/jobs';
-  const data = await fetchJson<{ jobs: GreenhouseJob[] }>(apiUrl);
-  const jobs = data.jobs ?? [];
-
+  // Isar nutzt Greenhouse's neues Job-Board-System (job-boards.eu.greenhouse.io,
+  // SSR-HTML, Pagination per ?page=N). Die klassische boards-api.greenhouse.io
+  // kennt das Board nicht (fetch failed). Daher HTML-Scrape — der ?offices[]=…
+  // Query wird serverseitig ausgewertet, wir bekommen nur München-Stellen.
+  //
+  // DOM-Struktur pro Job:
+  //   <tr class="job-post"><td class="cell">
+  //     <a href="…/isaraerospace/jobs/<id>" target="_top">
+  //       <p class="body body--medium">Title (m/f/d)</p>
+  //       <p class="body body__secondary body--metadata">Ottobrunn, Bavaria, Germany</p>
+  //     </a>
+  //   </td></tr>
+  const baseUrl = 'https://job-boards.eu.greenhouse.io/isaraerospace';
+  const officeQuery = 'offices%5B%5D=4008032101';
   const out: JobInput[] = [];
   const seen = new Set<string>();
-  let officeFiltered = 0;
-  let locFiltered = 0;
+  let totalJobsHeader: number | null = null;
 
-  for (const j of jobs) {
-    const officeIds = (j.offices ?? []).map(o => o.id).filter((x): x is number => typeof x === 'number');
-    const officeMatchPossible = officeIds.length > 0;
-    const officeHit = officeIds.includes(MUNICH_OFFICE_ID);
+  for (let page = 1; page <= 20; page++) {
+    const url = `${baseUrl}?${officeQuery}&page=${page}`;
+    let html: string;
+    try {
+      html = await fetchText(url);
+    } catch {
+      break;
+    }
+    const $ = cheerio.load(html);
 
-    const locationNames = [
-      j.location?.name ?? '',
-      ...(j.offices ?? []).flatMap(o => [o.name ?? '', o.location ?? '']),
-    ].filter(Boolean);
-    const isMunich = locationNames.some(l => isMunichArea(l));
-
-    if (officeMatchPossible) {
-      if (!officeHit) { officeFiltered++; continue; }
-    } else if (!isMunich) {
-      locFiltered++;
-      continue;
+    if (page === 1) {
+      const m = $('h2[data-testid="job-count-header"]').first().text().match(/(\d+)/);
+      if (m) totalJobsHeader = Number(m[1]);
     }
 
-    const url = j.absolute_url;
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
+    const rows = $('tr.job-post');
+    if (!rows.length) break;
 
-    const munichLoc = locationNames.find(l => isMunichArea(l)) ?? 'München';
-    const job: JobInput = {
-      company: 'Isar Aerospace',
-      title: j.title.trim().replace(/\s+/g, ' '),
-      location: munichLoc,
-      url,
-      source_portal: 'greenhouse-eu',
-    };
-    job.hash = hashJob(job);
-    out.push(job);
+    let pageAdded = 0;
+    rows.each((_, tr) => {
+      const $tr = $(tr);
+      const a = $tr.find('td.cell a').first();
+      const href = a.attr('href');
+      if (!href) return;
+      const title = a.find('p.body--medium').first().text().trim().replace(/\s+/g, ' ');
+      const location = a.find('p.body--metadata').first().text().trim().replace(/\s+/g, ' ');
+      if (!title) return;
+      const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+      if (seen.has(fullUrl)) return;
+      seen.add(fullUrl);
+      const job: JobInput = {
+        company: 'Isar Aerospace',
+        title,
+        location: location || 'München',
+        url: fullUrl,
+        source_portal: 'greenhouse-html-eu',
+      };
+      job.hash = hashJob(job);
+      out.push(job);
+      pageAdded++;
+    });
+
+    if (pageAdded === 0) break;
+    if (totalJobsHeader !== null && out.length >= totalJobsHeader) break;
   }
 
   if (out.length === 0) {
-    console.log(`  [debug Isar Aerospace] 0 Treffer: Greenhouse lieferte ${jobs.length} Jobs, ${officeFiltered} fielen am Office-Filter, ${locFiltered} am Munich-Fallback.`);
+    console.log(`  [debug Isar Aerospace] 0 Treffer auf HTML-Listing (Header sagte ${totalJobsHeader ?? '?'} Jobs).`);
   }
   return out;
 }
