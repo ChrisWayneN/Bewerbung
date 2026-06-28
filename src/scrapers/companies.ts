@@ -18,6 +18,7 @@ import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeEightfold } from './portals/eightfold';
+import { scrapeGreenhouse } from './portals/greenhouse';
 
 export interface CompanyMeta {
   name: string;
@@ -41,6 +42,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
+  { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse', status: '✅', note: 'EU-Greenhouse-Board, Office-ID 4008032101 (München)' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -242,6 +244,17 @@ async function scrapeMTU(): Promise<JobInput[]> {
   });
 }
 
+async function scrapeIsarAerospace(): Promise<JobInput[]> {
+  // Greenhouse-API, EU-Tenant. Office-ID 4008032101 = München (aus
+  // ?offices[]=4008032101 in der Karriere-URL).
+  return scrapeGreenhouse({
+    company: 'Isar Aerospace',
+    board: 'isaraerospace',
+    region: 'eu',
+    officeIds: [4008032101],
+  });
+}
+
 async function scrapeNeura(): Promise<JobInput[]> {
   // talentsconnect liefert die Stellen auf der /search-Seite.
   return scrapeTalentsConnect({
@@ -266,6 +279,7 @@ export const scrapers: Scraper[] = [
   { company: 'IABG',            run: wrap('IABG',            scrapeIABG) },
   { company: 'Diehl',           run: wrap('Diehl',           scrapeDiehl) },
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
+  { company: 'Isar Aerospace',  run: wrap('Isar Aerospace',  scrapeIsarAerospace) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {
