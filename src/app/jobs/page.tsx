@@ -10,6 +10,7 @@ interface SearchParams {
   company?: string;
   neu?: string;
   hidden?: string;
+  abg?: string;
   a?: string;
   beworben?: string;
   prozess?: string;
@@ -26,6 +27,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const filterFlags = {
     onlyNew: sp.neu === '1',
     includeHidden: sp.hidden === '1',
+    includeRejected: sp.abg === '1',
     onlyA: sp.a === '1',
     onlyApplied: sp.beworben === '1',
     onlyInProcess: sp.prozess === '1',
@@ -89,13 +91,14 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         <input type="hidden" name="sort" value={sp.sort ?? ''} />
         <AutoSubmitCheckbox name="neu" value="1" defaultChecked={sp.neu === '1'}>Nur Neue</AutoSubmitCheckbox>
         <AutoSubmitCheckbox name="hidden" value="1" defaultChecked={sp.hidden === '1'}>Inkl. Ausgeblendete</AutoSubmitCheckbox>
+        <AutoSubmitCheckbox name="abg" value="1" defaultChecked={sp.abg === '1'}>Inkl. Abgelehnt</AutoSubmitCheckbox>
         <AutoSubmitCheckbox name="a" value="1" defaultChecked={sp.a === '1'}>Nur A-Bewertung</AutoSubmitCheckbox>
         <AutoSubmitCheckbox name="beworben" value="1" defaultChecked={sp.beworben === '1'}>Beworben</AutoSubmitCheckbox>
         <AutoSubmitCheckbox name="prozess" value="1" defaultChecked={sp.prozess === '1'}>Im Bewerbungsprozess</AutoSubmitCheckbox>
         <button className="rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-medium">
           Anwenden
         </button>
-        {(sp.q || sp.company || sp.neu || sp.hidden || sp.a || sp.beworben || sp.prozess || sp.sort) && (
+        {(sp.q || sp.company || sp.neu || sp.hidden || sp.abg || sp.a || sp.beworben || sp.prozess || sp.sort) && (
           <Link href="/jobs" className="text-sm underline text-neutral-500 pb-2">zurücksetzen</Link>
         )}
       </form>
@@ -112,7 +115,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           <thead className="bg-neutral-100 dark:bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-500">
             <tr>
               <th className="px-3 py-2">Firma</th>
-              <th className="px-3 py-2">
+              <th className="px-3 py-2 whitespace-nowrap" style={{ minWidth: '210px' }}>
                 <span className="inline-flex items-center gap-1">
                   Status
                   <SortArrows sp={sp} ascValue="status-asc" descValue="status-desc"
@@ -121,7 +124,6 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               </th>
               <th className="px-3 py-2">Titel</th>
               <th className="px-3 py-2">Standort</th>
-              <th className="px-3 py-2">Quelle</th>
               <th className="px-3 py-2">Import</th>
               <th className="px-3 py-2">
                 <span className="inline-flex items-center gap-1">
@@ -135,7 +137,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           </thead>
           <tbody>
             {jobs.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-neutral-500">
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-neutral-500">
                 Keine Stellen. Lauf <code>npm run scrape</code> aus, um die DB zu befüllen.
               </td></tr>
             )}
@@ -146,29 +148,27 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 j.rating === 'B'  ? 'bg-rose-50 dark:bg-rose-900/20'      : '';
               return (
                 <tr key={j.id} className={'border-t border-neutral-200 dark:border-neutral-800 ' + tint + ' ' + (j.hidden ? 'opacity-50' : '')}>
-                  <td className="px-3 py-2 font-medium">{j.company}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 font-medium align-top">{j.company}</td>
+                  <td className="px-3 py-2 align-top" style={{ minWidth: '210px' }}>
                     <StatusButtons id={j.id} status={j.status} />
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 align-top">
                     <Link href={`/jobs/${j.id}`} className="hover:underline">
                       {j.title}
                     </Link>
                   </td>
-                  <td className="px-3 py-2 text-neutral-500">{j.location ?? '—'}</td>
-                  <td className="px-3 py-2">
-                    <a href={j.url} target="_blank" rel="noreferrer" className="underline text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
-                      {j.source_portal ?? 'Link'} ↗
-                    </a>
-                  </td>
-                  <td className="px-3 py-2 text-neutral-500 whitespace-nowrap">
+                  <td className="px-3 py-2 text-neutral-500 align-top">{j.location ?? '—'}</td>
+                  <td className="px-3 py-2 text-neutral-500 whitespace-nowrap align-top">
                     {new Date(j.first_seen).toISOString().slice(0, 10)}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 align-top">
                     <RatingButtons id={j.id} rating={j.rating} />
                   </td>
-                  <td className="px-3 py-2">
-                    <RejectButton id={j.id} status={j.status} />
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col gap-1">
+                      <HideButton id={j.id} hidden={!!j.hidden} />
+                      <RejectButton id={j.id} status={j.status} />
+                    </div>
                   </td>
                 </tr>
               );
@@ -196,6 +196,7 @@ function SortArrows({ sp, ascValue, descValue, ascTitle, descTitle }: SortArrows
     if (sp.company) p.set('company', sp.company);
     if (sp.neu) p.set('neu', sp.neu);
     if (sp.hidden) p.set('hidden', sp.hidden);
+    if (sp.abg) p.set('abg', sp.abg);
     if (sp.a) p.set('a', sp.a);
     if (sp.beworben) p.set('beworben', sp.beworben);
     if (sp.prozess) p.set('prozess', sp.prozess);
@@ -218,6 +219,26 @@ function SortArrows({ sp, ascValue, descValue, ascTitle, descTitle }: SortArrows
         className={descActive ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-300 dark:text-neutral-600 hover:text-neutral-600 dark:hover:text-neutral-300'}
       >▼</Link>
     </span>
+  );
+}
+
+function HideButton({ id, hidden }: { id: number; hidden: boolean }) {
+  // Orthogonal zum Status: blendet nur aus, ohne den Status zu setzen.
+  // Eine 'abgelehnt'-Stelle ist immer hidden=1; wird sie hier "eingeblendet",
+  // bleibt status='abgelehnt' erhalten (= sichtbar markiert als abgelehnt).
+  return (
+    <form action={`/api/jobs/${id}/hide`} method="post">
+      <input type="hidden" name="to" value={hidden ? '0' : '1'} />
+      <button
+        className={STATUS_BTN_BASE + ' ' +
+          (hidden
+            ? 'bg-amber-500/30 text-amber-800 dark:text-amber-200 font-semibold border-transparent'
+            : STATUS_BTN_INACTIVE)}
+        title={hidden ? 'Stelle wieder einblenden' : 'Stelle nur ausblenden (Status bleibt)'}
+      >
+        {hidden ? 'einblenden' : 'ausblenden'}
+      </button>
+    </form>
   );
 }
 

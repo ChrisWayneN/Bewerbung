@@ -206,7 +206,10 @@ export interface ListFilters {
   /** Einzel-Firmenname ODER "kat:<Kategoriename>" für eine Gruppe. */
   company?: string;
   onlyNew?: boolean;
+  /** Zeigt hidden=1-Stellen, die NICHT abgelehnt sind (manuell ausgeblendet). */
   includeHidden?: boolean;
+  /** Zeigt status='abgelehnt'-Stellen (per Klick auf "5: Abgelehnt"). */
+  includeRejected?: boolean;
   /** Nur A-bewertete Stellen anzeigen. */
   onlyA?: boolean;
   /** Nur Stellen mit status='beworben'. */
@@ -222,7 +225,15 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
   const params: Record<string, unknown> = { baseline };
   const where: string[] = [];
 
-  if (!filters.includeHidden) where.push('j.hidden = 0');
+  // Sichtbarkeit: hidden=0 immer sichtbar.
+  //   includeHidden  → manuell ausgeblendete (hidden=1, status != 'abgelehnt')
+  //   includeRejected → abgelehnte (hidden=1, status='abgelehnt')
+  {
+    const vis: string[] = ['j.hidden = 0'];
+    if (filters.includeRejected) vis.push("(j.hidden = 1 AND j.status = 'abgelehnt')");
+    if (filters.includeHidden)   vis.push("(j.hidden = 1 AND (j.status IS NULL OR j.status != 'abgelehnt'))");
+    where.push('(' + vis.join(' OR ') + ')');
+  }
   if (filters.company) {
     if (filters.company.startsWith('kat:')) {
       // Lazy import, damit das DB-Modul keinen harten Import auf die
@@ -400,12 +411,17 @@ export function listCompanies(): string[] {
 /** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
  *  onlyNew (seit letztem Import) und includeHidden. Wird im Firmen-
  *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
-export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
+export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; includeRejected?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const where: string[] = [];
   const params: Record<string, unknown> = { baseline };
-  if (!filters.includeHidden) where.push('j.hidden = 0');
+  {
+    const vis: string[] = ['j.hidden = 0'];
+    if (filters.includeRejected) vis.push("(j.hidden = 1 AND j.status = 'abgelehnt')");
+    if (filters.includeHidden)   vis.push("(j.hidden = 1 AND (j.status IS NULL OR j.status != 'abgelehnt'))");
+    where.push('(' + vis.join(' OR ') + ')');
+  }
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
   if (filters.onlyA) where.push("j.rating = 'A'");
   if (filters.onlyApplied && filters.onlyInProcess) {
