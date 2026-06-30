@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { listJobs, listCompanies, getScraperStatuses, getCompanyCounts, type JobSort } from '@/lib/db';
 import { COMPANY_CATEGORIES } from '@/lib/categories';
 import { AutoSubmitCheckbox } from './AutoSubmitCheckbox';
+import { FilterDropdown } from './FilterDropdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,12 @@ interface SearchParams {
 const ALL_SORTS: JobSort[] = ['rating-desc', 'rating-asc', 'status-asc', 'status-desc'];
 function parseSort(v: string | undefined): JobSort | undefined {
   return (ALL_SORTS as string[]).includes(v ?? '') ? (v as JobSort) : undefined;
+}
+
+const CAT_STYLE = { fontWeight: 700, textDecoration: 'underline' } as const;
+
+function activeFilterCount(sp: SearchParams): number {
+  return [sp.neu, sp.hidden, sp.abg, sp.a, sp.beworben, sp.prozess].filter(v => v === '1').length;
 }
 
 export default async function JobsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -68,9 +75,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             {Object.entries(COMPANY_CATEGORIES).flatMap(([cat, members]) => {
               const catCount = members.reduce((s, c) => s + (counts[c] ?? 0), 0);
               return [
-                <option key={'kat:' + cat} value={'kat:' + cat}>{`${cat} (${catCount})`}</option>,
+                <option key={'kat:' + cat} value={'kat:' + cat} style={CAT_STYLE}>{`${cat} (${catCount})`}</option>,
                 ...members.map(c => (
-                  <option key={c} value={c}>{`   ${c} (${counts[c] ?? 0})`}</option>
+                  <option key={c} value={c}>{`    ${c} (${counts[c] ?? 0})`}</option>
                 )),
               ];
             })}
@@ -79,9 +86,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               const others = companies.filter(c => !categorised.has(c));
               if (!others.length) return null;
               return [
-                <option key="sonstige-label" disabled>Sonstige</option>,
+                <option key="sonstige-label" disabled style={CAT_STYLE}>Sonstige</option>,
                 ...others.map(c => (
-                  <option key={c} value={c}>{`   ${c} (${counts[c] ?? 0})`}</option>
+                  <option key={c} value={c}>{`    ${c} (${counts[c] ?? 0})`}</option>
                 )),
               ];
             })()}
@@ -89,12 +96,17 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         </div>
         {/* Sortierung wird über die Spaltenkopf-Pfeile bei Status & Bewertung gesteuert, nicht hier. */}
         <input type="hidden" name="sort" value={sp.sort ?? ''} />
-        <AutoSubmitCheckbox name="neu" value="1" defaultChecked={sp.neu === '1'}>Nur Neue</AutoSubmitCheckbox>
-        <AutoSubmitCheckbox name="hidden" value="1" defaultChecked={sp.hidden === '1'}>Inkl. Ausgeblendete</AutoSubmitCheckbox>
-        <AutoSubmitCheckbox name="abg" value="1" defaultChecked={sp.abg === '1'}>Inkl. Abgelehnt</AutoSubmitCheckbox>
-        <AutoSubmitCheckbox name="a" value="1" defaultChecked={sp.a === '1'}>Nur A-Bewertung</AutoSubmitCheckbox>
-        <AutoSubmitCheckbox name="beworben" value="1" defaultChecked={sp.beworben === '1'}>Beworben</AutoSubmitCheckbox>
-        <AutoSubmitCheckbox name="prozess" value="1" defaultChecked={sp.prozess === '1'}>Im Bewerbungsprozess</AutoSubmitCheckbox>
+        <div>
+          <label className="block text-xs uppercase tracking-wider text-neutral-500 mb-1">Filter</label>
+          <FilterDropdown label="Filter" activeCount={activeFilterCount(sp)}>
+            <AutoSubmitCheckbox name="neu" value="1" defaultChecked={sp.neu === '1'}>Nur Neue</AutoSubmitCheckbox>
+            <AutoSubmitCheckbox name="hidden" value="1" defaultChecked={sp.hidden === '1'}>Inkl. Ausgeblendete</AutoSubmitCheckbox>
+            <AutoSubmitCheckbox name="abg" value="1" defaultChecked={sp.abg === '1'}>Inkl. Abgelehnt</AutoSubmitCheckbox>
+            <AutoSubmitCheckbox name="a" value="1" defaultChecked={sp.a === '1'}>Nur A-Bewertung</AutoSubmitCheckbox>
+            <AutoSubmitCheckbox name="beworben" value="1" defaultChecked={sp.beworben === '1'}>Beworben</AutoSubmitCheckbox>
+            <AutoSubmitCheckbox name="prozess" value="1" defaultChecked={sp.prozess === '1'}>Im Bewerbungsprozess</AutoSubmitCheckbox>
+          </FilterDropdown>
+        </div>
         <button className="rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-medium">
           Anwenden
         </button>
