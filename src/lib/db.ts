@@ -55,6 +55,14 @@ export function getDb(): Database.Database {
       WHERE status IS NOT NULL AND status != ''
     `);
   }
+  // Migration: hidden=1 ohne Status wird zu 'abgelehnt' (neuer Workflow:
+  // status='abgelehnt' synchron mit hidden=1). Idempotent — kein Effekt bei
+  // wiederholtem Aufruf, weil dann kein Match mehr.
+  db.exec(`
+    UPDATE jobs SET status = 'abgelehnt' WHERE hidden = 1 AND (status IS NULL OR status = '');
+    INSERT OR IGNORE INTO status_urls (url, status, set_at)
+      SELECT url, status, COALESCE(last_seen, first_seen) FROM jobs WHERE status = 'abgelehnt';
+  `);
   _db = db;
   return db;
 }
@@ -336,20 +344,28 @@ export function setHidden(id: number, hidden: boolean): void {
 }
 
 /** Setzt oder löscht (status=null) den Bewerbungs-Status einer Stelle.
- *  Persistiert URL-stabil in status_urls (überlebt Auto-Prune). */
+ *  Synchronisiert hidden: status='abgelehnt' → hidden=1, alles andere → hidden=0.
+ *  Persistiert URL-stabil in status_urls und hidden_urls (überlebt Auto-Prune). */
 export function setStatus(id: number, status: JobStatus | null): void {
   const db = getDb();
   const row = db.prepare('SELECT url FROM jobs WHERE id = ?').get(id) as { url: string } | undefined;
+  const hidden = status === 'abgelehnt' ? 1 : 0;
+  const now = new Date().toISOString();
   const tx = db.transaction(() => {
-    db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, id);
+    db.prepare('UPDATE jobs SET status = ?, hidden = ? WHERE id = ?').run(status, hidden, id);
     if (!row) return;
     if (status) {
       db.prepare(`
         INSERT INTO status_urls (url, status, set_at) VALUES (?, ?, ?)
         ON CONFLICT(url) DO UPDATE SET status=excluded.status, set_at=excluded.set_at
-      `).run(row.url, status, new Date().toISOString());
+      `).run(row.url, status, now);
     } else {
       db.prepare('DELETE FROM status_urls WHERE url = ?').run(row.url);
+    }
+    if (hidden) {
+      db.prepare('INSERT OR IGNORE INTO hidden_urls (url, hidden_at) VALUES (?, ?)').run(row.url, now);
+    } else {
+      db.prepare('DELETE FROM hidden_urls WHERE url = ?').run(row.url);
     }
   });
   tx();

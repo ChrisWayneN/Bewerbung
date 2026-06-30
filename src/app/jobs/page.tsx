@@ -148,7 +148,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 <tr key={j.id} className={'border-t border-neutral-200 dark:border-neutral-800 ' + tint + ' ' + (j.hidden ? 'opacity-50' : '')}>
                   <td className="px-3 py-2 font-medium">{j.company}</td>
                   <td className="px-3 py-2">
-                    <StatusButtons id={j.id} status={j.status} isNew={j.is_new} />
+                    <StatusButtons id={j.id} status={j.status} />
                   </td>
                   <td className="px-3 py-2">
                     <Link href={`/jobs/${j.id}`} className="hover:underline">
@@ -168,7 +168,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                     <RatingButtons id={j.id} rating={j.rating} />
                   </td>
                   <td className="px-3 py-2">
-                    <HideButton id={j.id} hidden={!!j.hidden} />
+                    <RejectButton id={j.id} status={j.status} />
                   </td>
                 </tr>
               );
@@ -221,12 +221,22 @@ function SortArrows({ sp, ascValue, descValue, ascTitle, descTitle }: SortArrows
   );
 }
 
-function HideButton({ id, hidden }: { id: number; hidden: boolean }) {
+function RejectButton({ id, status }: { id: number; status: string | null }) {
+  // "5: Abgelehnt" sitzt jetzt anstelle des alten ausblenden-Buttons.
+  // Klick: status='abgelehnt' + hidden=1 (synchron, in setStatus). Toggle off →
+  // status=null + hidden=0 → Stelle wieder sichtbar.
+  const isActive = status === 'abgelehnt';
   return (
-    <form action={`/api/jobs/${id}/hide`} method="post">
-      <input type="hidden" name="to" value={hidden ? '0' : '1'} />
-      <button className="text-xs text-neutral-500 hover:text-red-600">
-        {hidden ? 'einblenden' : 'ausblenden'}
+    <form action={`/api/jobs/${id}/status`} method="post">
+      <input type="hidden" name="to" value={isActive ? '' : 'abgelehnt'} />
+      <button
+        className={STATUS_BTN_BASE + ' ' +
+          (isActive
+            ? 'bg-rose-500/40 text-rose-800 dark:text-rose-200 font-semibold border-transparent'
+            : STATUS_BTN_INACTIVE)}
+        title={isActive ? 'Ablehnung zurücknehmen (wieder einblenden)' : 'Als "5: Abgelehnt" markieren (ausblenden)'}
+      >
+        5: Abgelehnt
       </button>
     </form>
   );
@@ -261,42 +271,43 @@ function RatingButtons({ id, rating }: { id: number; rating: string | null }) {
   );
 }
 
-function StatusButtons({ id, status, isNew }: { id: number; status: string | null; isNew: boolean }) {
-  // 4 Pill-Buttons (Gelesen / Beworben / Prozess / Abgelehnt). "Neu" ist kein
-  // klickbarer Status, sondern nur ein abgeleiteter Badge: zeigt, dass die
-  // Stelle neu seit dem letzten Import ist und noch keinen expliziten Status hat.
-  const opts: { value: 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt'; label: string; active: string }[] = [
-    { value: 'gelesen',   label: 'Gelesen',   active: 'bg-neutral-400/40 text-neutral-800 dark:text-neutral-100 font-semibold' },
-    { value: 'beworben',  label: 'Beworben',  active: 'bg-sky-500/40 text-sky-800 dark:text-sky-200 font-semibold' },
-    { value: 'prozess',   label: 'Prozess',   active: 'bg-indigo-500/40 text-indigo-800 dark:text-indigo-200 font-semibold' },
-    { value: 'abgelehnt', label: 'Abgelehnt', active: 'bg-rose-500/40 text-rose-800 dark:text-rose-200 font-semibold' },
+// Gemeinsame Button-Stile für alle 5 Status-Buttons: feste Breite, damit
+// die 4 im 2×2-Grid und der 5. (Abgelehnt) in der Nachbarspalte identisch
+// aussehen.
+const STATUS_BTN_BASE = 'w-24 text-[10px] px-1.5 py-0.5 rounded border text-center';
+const STATUS_BTN_INACTIVE = 'text-neutral-400 border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800';
+
+function StatusButtons({ id, status }: { id: number; status: string | null; isNew?: boolean }) {
+  // 4 Buttons im 2×2-Grid: 1:Neu, 2:Gelesen, 3:Beworben, 4:Prozess.
+  // "1: Neu" entspricht status=null — der Klick darauf setzt zurück.
+  // Der 5. Status (Abgelehnt) sitzt in der letzten Tabellenspalte (RejectButton).
+  const opts: { value: 'gelesen' | 'beworben' | 'prozess' | null; num: '1' | '2' | '3' | '4'; label: string; activeClass: string }[] = [
+    { value: null,       num: '1', label: 'Neu',      activeClass: 'bg-emerald-500/30 text-emerald-800 dark:text-emerald-200 font-semibold' },
+    { value: 'gelesen',  num: '2', label: 'Gelesen',  activeClass: 'bg-neutral-400/40 text-neutral-800 dark:text-neutral-100 font-semibold' },
+    { value: 'beworben', num: '3', label: 'Beworben', activeClass: 'bg-sky-500/40 text-sky-800 dark:text-sky-200 font-semibold' },
+    { value: 'prozess',  num: '4', label: 'Prozess',  activeClass: 'bg-indigo-500/40 text-indigo-800 dark:text-indigo-200 font-semibold' },
   ];
   return (
-    <div className="flex flex-col gap-1">
-      {status === null && isNew && (
-        <span className="inline-block text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded w-fit">
-          neu
-        </span>
-      )}
-      <div className="flex flex-wrap gap-1">
-        {opts.map(o => {
-          const isActive = status === o.value;
-          return (
-            <form key={o.value} action={`/api/jobs/${id}/status`} method="post">
-              <input type="hidden" name="to" value={isActive ? '' : o.value} />
-              <button
-                className={'text-[10px] px-1.5 py-0.5 rounded border ' +
-                  (isActive
-                    ? o.active + ' border-transparent'
-                    : 'text-neutral-400 border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800')}
-                title={isActive ? 'Status zurücksetzen' : `Als "${o.label}" markieren`}
-              >
-                {o.label}
-              </button>
-            </form>
-          );
-        })}
-      </div>
+    <div className="grid grid-cols-2 gap-1 w-fit">
+      {opts.map(o => {
+        const isActive = status === o.value;
+        // "Reset"-Klick auf aktiven Button. "1: Neu" sendet immer leer (status=null).
+        const toValue = isActive ? '' : (o.value ?? '');
+        return (
+          <form key={o.num} action={`/api/jobs/${id}/status`} method="post">
+            <input type="hidden" name="to" value={toValue} />
+            <button
+              className={STATUS_BTN_BASE + ' ' +
+                (isActive
+                  ? o.activeClass + ' border-transparent'
+                  : STATUS_BTN_INACTIVE)}
+              title={`Als "${o.num}: ${o.label}" markieren`}
+            >
+              {o.num}: {o.label}
+            </button>
+          </form>
+        );
+      })}
     </div>
   );
 }
