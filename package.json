@@ -11,6 +11,7 @@
     "scrape:one": "tsx scripts/scrape.ts --only",
     "cleanup": "tsx scripts/cleanup-blacklist.ts",
     "clear-enrichment": "tsx scripts/clear-enrichment.ts",
+    "reset-rejected": "tsx scripts/reset-rejected.ts",
     "reset": "tsx scripts/reset.ts"
   },
   "dependencies": {

@@ -55,14 +55,6 @@ export function getDb(): Database.Database {
       WHERE status IS NOT NULL AND status != ''
     `);
   }
-  // Migration: hidden=1 ohne Status wird zu 'abgelehnt' (neuer Workflow:
-  // status='abgelehnt' synchron mit hidden=1). Idempotent — kein Effekt bei
-  // wiederholtem Aufruf, weil dann kein Match mehr.
-  db.exec(`
-    UPDATE jobs SET status = 'abgelehnt' WHERE hidden = 1 AND (status IS NULL OR status = '');
-    INSERT OR IGNORE INTO status_urls (url, status, set_at)
-      SELECT url, status, COALESCE(last_seen, first_seen) FROM jobs WHERE status = 'abgelehnt';
-  `);
   _db = db;
   return db;
 }
