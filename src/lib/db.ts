@@ -18,11 +18,14 @@ export function getDb(): Database.Database {
     const schema = readFileSync(SCHEMA_PATH, 'utf8');
     db.exec(schema);
   }
-  // Migration: rating-Spalte auf existierender jobs-Tabelle. CREATE TABLE
-  // IF NOT EXISTS fügt keine Spalten zu vorhandenen Tabellen hinzu.
+  // Migration: rating/status-Spalten auf existierender jobs-Tabelle. CREATE
+  // TABLE IF NOT EXISTS fügt keine Spalten zu vorhandenen Tabellen hinzu.
   const cols = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
   if (!cols.some(c => c.name === 'rating')) {
     db.exec("ALTER TABLE jobs ADD COLUMN rating TEXT");
+  }
+  if (!cols.some(c => c.name === 'status')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN status TEXT");
   }
   // Backfill: bestehende hidden=1-Jobs in hidden_urls übernehmen, falls
   // die Tabelle leer ist (z.B. nach Schema-Migration). Idempotent durch
@@ -41,6 +44,15 @@ export function getDb(): Database.Database {
       INSERT OR IGNORE INTO rated_urls (url, rating, rated_at)
       SELECT url, rating, COALESCE(last_seen, first_seen) FROM jobs
       WHERE rating IS NOT NULL AND rating != ''
+    `);
+  }
+  // Backfill status_urls aus jobs.status (analog).
+  const statusCnt = db.prepare('SELECT COUNT(*) AS c FROM status_urls').get() as { c: number };
+  if (statusCnt.c === 0) {
+    db.exec(`
+      INSERT OR IGNORE INTO status_urls (url, status, set_at)
+      SELECT url, status, COALESCE(last_seen, first_seen) FROM jobs
+      WHERE status IS NOT NULL AND status != ''
     `);
   }
   _db = db;
@@ -62,9 +74,11 @@ export interface JobRow {
   hidden: number;
   hash: string | null;
   rating: string | null;
+  status: string | null;
 }
 
 export type JobRating = 'A' | 'AB' | 'B';
+export type JobStatus = 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt';
 
 export interface JobInput {
   company: string;
@@ -90,11 +104,12 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
   const select = db.prepare('SELECT id, hash FROM jobs WHERE url = ?');
   const isHidden = db.prepare('SELECT 1 FROM hidden_urls WHERE url = ?');
   const getRating = db.prepare('SELECT rating FROM rated_urls WHERE url = ?');
+  const getStatus = db.prepare('SELECT status FROM status_urls WHERE url = ?');
   const insert = db.prepare(`
     INSERT INTO jobs (company, title, location, url, source_portal, description_raw,
-      tasks, qualifications, first_seen, last_seen, hidden, hash, rating)
+      tasks, qualifications, first_seen, last_seen, hidden, hash, rating, status)
     VALUES (@company, @title, @location, @url, @source_portal, @description_raw,
-      @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash, @rating)
+      @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash, @rating, @status)
   `);
   const update = db.prepare(`
     UPDATE jobs SET title=@title, location=@location, source_portal=@source_portal,
@@ -127,7 +142,9 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
         const hidden = isHidden.get(j.url) ? 1 : 0;
         const ratingRow = getRating.get(j.url) as { rating: string } | undefined;
         const rating = ratingRow?.rating ?? null;
-        const r = insert.run({ ...row, hidden, rating });
+        const statusRow = getStatus.get(j.url) as { status: string } | undefined;
+        const status = statusRow?.status ?? null;
+        const r = insert.run({ ...row, hidden, rating, status });
         inserted++;
         ids.push(Number(r.lastInsertRowid));
       } else {
@@ -174,7 +191,7 @@ export function getPreviousImportTimestamp(): string {
   return row?.run_at ?? '1970-01-01T00:00:00.000Z';
 }
 
-export type JobSort = 'rating-desc' | 'rating-asc';
+export type JobSort = 'rating-desc' | 'rating-asc' | 'status-asc' | 'status-desc';
 
 export interface ListFilters {
   q?: string;
@@ -184,6 +201,10 @@ export interface ListFilters {
   includeHidden?: boolean;
   /** Nur A-bewertete Stellen anzeigen. */
   onlyA?: boolean;
+  /** Nur Stellen mit status='beworben'. */
+  onlyApplied?: boolean;
+  /** Nur Stellen mit status='prozess'. Wenn beide aktiv: OR. */
+  onlyInProcess?: boolean;
   sort?: JobSort;
 }
 
@@ -215,6 +236,13 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
   }
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
   if (filters.onlyA) where.push("j.rating = 'A'");
+  if (filters.onlyApplied && filters.onlyInProcess) {
+    where.push("j.status IN ('beworben', 'prozess')");
+  } else if (filters.onlyApplied) {
+    where.push("j.status = 'beworben'");
+  } else if (filters.onlyInProcess) {
+    where.push("j.status = 'prozess'");
+  }
 
   const orderBy = buildOrderBy(filters.sort);
 
@@ -253,12 +281,32 @@ function baseSelect(where: string[], orderBy: string): string {
 }
 
 function buildOrderBy(sort: JobSort | undefined): string {
-  // Stellen ohne Rating landen immer am Ende (Priorität 9 in der CASE).
+  // Stellen ohne passenden Sort-Schlüssel landen immer am Ende (Priorität 9).
   if (sort === 'rating-desc') {
     return "ORDER BY CASE j.rating WHEN 'A' THEN 1 WHEN 'AB' THEN 2 WHEN 'B' THEN 3 ELSE 9 END ASC, j.first_seen DESC, j.id DESC";
   }
   if (sort === 'rating-asc') {
     return "ORDER BY CASE j.rating WHEN 'B' THEN 1 WHEN 'AB' THEN 2 WHEN 'A' THEN 3 ELSE 9 END ASC, j.first_seen DESC, j.id DESC";
+  }
+  // Status-Reihenfolge (1→5): Neu, Gelesen, Beworben, Prozess, Abgelehnt.
+  // "Neu" = first_seen > Baseline UND status IS NULL.
+  if (sort === 'status-asc') {
+    return `ORDER BY CASE
+      WHEN j.status IS NULL AND j.first_seen > @baseline THEN 1
+      WHEN j.status = 'gelesen' THEN 2
+      WHEN j.status = 'beworben' THEN 3
+      WHEN j.status = 'prozess' THEN 4
+      WHEN j.status = 'abgelehnt' THEN 5
+      ELSE 9 END ASC, j.first_seen DESC, j.id DESC`;
+  }
+  if (sort === 'status-desc') {
+    return `ORDER BY CASE
+      WHEN j.status = 'abgelehnt' THEN 1
+      WHEN j.status = 'prozess' THEN 2
+      WHEN j.status = 'beworben' THEN 3
+      WHEN j.status = 'gelesen' THEN 4
+      WHEN j.status IS NULL AND j.first_seen > @baseline THEN 5
+      ELSE 9 END ASC, j.first_seen DESC, j.id DESC`;
   }
   return 'ORDER BY j.first_seen DESC, j.id DESC';
 }
@@ -282,6 +330,26 @@ export function setHidden(id: number, hidden: boolean): void {
       db.prepare('INSERT OR IGNORE INTO hidden_urls (url, hidden_at) VALUES (?, ?)').run(row.url, new Date().toISOString());
     } else {
       db.prepare('DELETE FROM hidden_urls WHERE url = ?').run(row.url);
+    }
+  });
+  tx();
+}
+
+/** Setzt oder löscht (status=null) den Bewerbungs-Status einer Stelle.
+ *  Persistiert URL-stabil in status_urls (überlebt Auto-Prune). */
+export function setStatus(id: number, status: JobStatus | null): void {
+  const db = getDb();
+  const row = db.prepare('SELECT url FROM jobs WHERE id = ?').get(id) as { url: string } | undefined;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE jobs SET status = ? WHERE id = ?').run(status, id);
+    if (!row) return;
+    if (status) {
+      db.prepare(`
+        INSERT INTO status_urls (url, status, set_at) VALUES (?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET status=excluded.status, set_at=excluded.set_at
+      `).run(row.url, status, new Date().toISOString());
+    } else {
+      db.prepare('DELETE FROM status_urls WHERE url = ?').run(row.url);
     }
   });
   tx();
@@ -316,7 +384,7 @@ export function listCompanies(): string[] {
 /** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
  *  onlyNew (seit letztem Import) und includeHidden. Wird im Firmen-
  *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
-export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; onlyA?: boolean } = {}): Record<string, number> {
+export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const where: string[] = [];
@@ -324,6 +392,13 @@ export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: b
   if (!filters.includeHidden) where.push('j.hidden = 0');
   if (filters.onlyNew) where.push('j.first_seen > @baseline');
   if (filters.onlyA) where.push("j.rating = 'A'");
+  if (filters.onlyApplied && filters.onlyInProcess) {
+    where.push("j.status IN ('beworben', 'prozess')");
+  } else if (filters.onlyApplied) {
+    where.push("j.status = 'beworben'");
+  } else if (filters.onlyInProcess) {
+    where.push("j.status = 'prozess'");
+  }
   const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const rows = db.prepare(`SELECT j.company AS company, COUNT(*) AS c FROM jobs j ${whereClause} GROUP BY j.company`).all(params) as Array<{ company: string; c: number }>;
   const out: Record<string, number> = {};

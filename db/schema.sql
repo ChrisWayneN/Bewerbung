@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   last_seen TEXT NOT NULL,
   hidden INTEGER NOT NULL DEFAULT 0,
   hash TEXT,
-  rating TEXT          -- 'A' | 'AB' | 'B' | NULL
+  rating TEXT,         -- 'A' | 'AB' | 'B' | NULL
+  status TEXT          -- 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt' | NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
@@ -49,6 +50,16 @@ CREATE TABLE IF NOT EXISTS rated_urls (
   url TEXT PRIMARY KEY,
   rating TEXT NOT NULL,
   rated_at TEXT NOT NULL
+);
+
+-- URL-stabile Bewerbungs-Status. Selbe Logik wie rated_urls.
+-- status ∈ {'gelesen', 'beworben', 'prozess', 'abgelehnt'}.
+-- "Neu" ist KEIN persistierter Status, sondern abgeleitet aus
+-- (status IS NULL AND first_seen > letzter Import-Baseline).
+CREATE TABLE IF NOT EXISTS status_urls (
+  url TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  set_at TEXT NOT NULL
 );
 
 -- FTS5 virtual table for full-text search.
