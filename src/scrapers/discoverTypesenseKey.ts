@@ -18,7 +18,12 @@ import { fetchText } from './base';
  * HTML oder JS-Bundle auffindbar bleibt.
  */
 
+// Volle URL inklusive Key.
 const URL_PATTERN = /https?:\/\/api\.my-job-shop\.com\/[^"'\\<>\s]*multi_search\?x-typesense-api-key=[A-Za-z0-9=%+\-_/]+/;
+// Fallback: nur der Key als String-Literal — für den Fall, dass URL und
+// Key im Bundle aus mehreren Konstanten zusammengesetzt werden.
+const KEY_ONLY_PATTERN = /x-typesense-api-key["'`\s]*[:=]?["'`\s]*([A-Za-z0-9=%+\-_/]{60,})/;
+const API_BASE = 'https://api.my-job-shop.com/api/typesense/multi_search';
 const SECRETS_PATH = resolve(process.cwd(), 'src', 'config', 'scraper-secrets.json');
 
 let cachedUrl: string | null = null;
@@ -48,12 +53,25 @@ export async function discoverTypesenseUrl(opts: DiscoverOptions): Promise<strin
     log(`  [discover] HTML-Fetch fehlgeschlagen (${(e as Error).message})`);
   }
 
-  if (html) {
-    const m = html.match(URL_PATTERN);
+  const debug = process.env.SCRAPE_DEBUG === '1';
+  const searchText = (text: string, source: string): string | null => {
+    const m = text.match(URL_PATTERN);
     if (m) {
-      log(`  [discover] Typesense-URL im HTML gefunden (${m[0].length} chars)`);
-      return (cachedUrl = m[0]);
+      log(`  [discover] Volle Typesense-URL in ${source} gefunden (${m[0].length} chars)`);
+      return m[0];
     }
+    const km = text.match(KEY_ONLY_PATTERN);
+    if (km) {
+      const built = `${API_BASE}?x-typesense-api-key=${km[1]}`;
+      log(`  [discover] Key-Fragment in ${source} → URL zusammengesetzt (${built.length} chars)`);
+      return built;
+    }
+    return null;
+  };
+
+  if (html) {
+    const found = searchText(html, 'HTML');
+    if (found) return (cachedUrl = found);
 
     // Strategie 2: JS-Bundles aus dem HTML extrahieren und durchsuchen.
     // Moderne SPAs (Vite/Nuxt/Vue) hängen die meisten Chunks als
@@ -71,24 +89,24 @@ export async function discoverTypesenseUrl(opts: DiscoverOptions): Promise<strin
     const candidates = Array.from(allRefs)
       .filter(src => /\.js(\?|$|#)/i.test(src) || /\.mjs(\?|$|#)/i.test(src))
       .map(src => (src.startsWith('http') ? src : src.startsWith('/') ? baseOrigin + src : `${baseOrigin}/${src}`))
-      // Bevorzuge Bundles, die typischerweise API-Konstanten enthalten
+      // Bevorzuge Bundles, die typischerweise API-Konstanten enthalten.
       .sort((a, b) => {
-        const score = (u: string) => (/search|api|typesense|offer|career|jobs|_nuxt|chunks?\/app|main|index|entry/.test(u) ? 0 : 1);
+        const score = (u: string) => (/search|api|typesense|offer|career|jobs|_nuxt|chunks?\/app|main|index|entry|vendor|core|app|bundle/.test(u) ? 0 : 1);
         return score(a) - score(b);
       })
-      .slice(0, 20);
+      .slice(0, 50);
+
+    if (debug) log(`  [discover] ${candidates.length} JS-Kandidaten (Top 5): ${candidates.slice(0, 5).map(u => u.split('/').pop()).join(', ')}`);
 
     for (const url of candidates) {
       try {
         const js = await fetchText(url);
-        const jm = js.match(URL_PATTERN);
-        if (jm) {
-          log(`  [discover] Typesense-URL im Bundle ${url.split('/').pop()} gefunden`);
-          return (cachedUrl = jm[0]);
-        }
+        const found = searchText(js, url.split('/').pop() ?? url);
+        if (found) return (cachedUrl = found);
       } catch { /* skip */ }
     }
-    log(`  [discover] Typesense-URL nicht in HTML/Bundles auffindbar (${candidates.length} JS-Files geprüft)`);
+    log(`  [discover] Typesense-URL nicht in HTML/Bundles auffindbar (${candidates.length} JS-Files geprüft).`);
+    log(`  [discover] Manueller Override in src/config/scraper-secrets.json setzen — siehe Kommentar oben in discoverTypesenseKey.ts.`);
   }
 
   // Strategie 3: Manueller Override
