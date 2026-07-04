@@ -3,6 +3,7 @@ import { listJobs, listCompanies, getScraperStatuses, getCompanyCounts, type Job
 import { COMPANY_CATEGORIES } from '@/lib/categories';
 import { AutoSubmitCheckbox } from './AutoSubmitCheckbox';
 import { FilterDropdown } from './FilterDropdown';
+import { StatusSelect } from './StatusSelect';
 
 export const dynamic = 'force-dynamic';
 
@@ -127,7 +128,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           <thead className="bg-neutral-100 dark:bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-500">
             <tr>
               <th className="px-3 py-2">Firma</th>
-              <th className="px-3 py-2 whitespace-nowrap" style={{ minWidth: '210px' }}>
+              <th className="px-3 py-2 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
                   Status
                   <SortArrows sp={sp} ascValue="status-asc" descValue="status-desc"
@@ -161,8 +162,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               return (
                 <tr key={j.id} className={'border-t border-neutral-200 dark:border-neutral-800 ' + tint + ' ' + (j.hidden ? 'opacity-50' : '')}>
                   <td className="px-3 py-2 font-medium align-top">{j.company}</td>
-                  <td className="px-3 py-2 align-top" style={{ minWidth: '210px' }}>
-                    <StatusButtons id={j.id} status={j.status} />
+                  <td className="px-3 py-2 align-top">
+                    <StatusSelect id={j.id} status={j.status} />
                   </td>
                   <td className="px-3 py-2 align-top">
                     <Link href={`/jobs/${j.id}`} className="hover:underline">
@@ -310,37 +311,3 @@ function RatingButtons({ id, rating }: { id: number; rating: string | null }) {
 const STATUS_BTN_BASE = 'w-24 text-[10px] px-1.5 py-0.5 rounded border text-center';
 const STATUS_BTN_INACTIVE = 'text-neutral-400 border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800';
 
-function StatusButtons({ id, status }: { id: number; status: string | null; isNew?: boolean }) {
-  // 4 Buttons im 2×2-Grid: 1:Neu, 2:Gelesen, 3:Beworben, 4:Prozess.
-  // "1: Neu" entspricht status=null — der Klick darauf setzt zurück.
-  // Der 5. Status (Abgelehnt) sitzt in der letzten Tabellenspalte (RejectButton).
-  const opts: { value: 'gelesen' | 'beworben' | 'prozess' | null; num: '1' | '2' | '3' | '4'; label: string; activeClass: string }[] = [
-    { value: null,       num: '1', label: 'Neu',      activeClass: 'bg-emerald-500/30 text-emerald-800 dark:text-emerald-200 font-semibold' },
-    { value: 'gelesen',  num: '2', label: 'Gelesen',  activeClass: 'bg-neutral-400/40 text-neutral-800 dark:text-neutral-100 font-semibold' },
-    { value: 'beworben', num: '3', label: 'Beworben', activeClass: 'bg-sky-500/40 text-sky-800 dark:text-sky-200 font-semibold' },
-    { value: 'prozess',  num: '4', label: 'Prozess',  activeClass: 'bg-indigo-500/40 text-indigo-800 dark:text-indigo-200 font-semibold' },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-1 w-fit">
-      {opts.map(o => {
-        const isActive = status === o.value;
-        // "Reset"-Klick auf aktiven Button. "1: Neu" sendet immer leer (status=null).
-        const toValue = isActive ? '' : (o.value ?? '');
-        return (
-          <form key={o.num} action={`/api/jobs/${id}/status`} method="post">
-            <input type="hidden" name="to" value={toValue} />
-            <button
-              className={STATUS_BTN_BASE + ' ' +
-                (isActive
-                  ? o.activeClass + ' border-transparent'
-                  : STATUS_BTN_INACTIVE)}
-              title={`Als "${o.num}: ${o.label}" markieren`}
-            >
-              {o.num}: {o.label}
-            </button>
-          </form>
-        );
-      })}
-    </div>
-  );
-}
