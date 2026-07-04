@@ -544,10 +544,28 @@ async function scrapeMTU(): Promise<JobInput[]> {
   return out;
 }
 
+/** Nuxt-Payload-Format: Array wo Objekte ihre Value als Index-Referenz halten.
+ *  `{"tenantId": 346}` bedeutet: der eigentliche Wert steht an payload[346].
+ *  Diese Funktion findet den ersten Key mit gegebenem Namen und resolved den Ref. */
+function resolveNuxtPayloadValue(payload: unknown[], key: string): string | null {
+  for (const el of payload) {
+    if (el && typeof el === 'object' && !Array.isArray(el) && key in (el as Record<string, unknown>)) {
+      const raw = (el as Record<string, unknown>)[key];
+      if (typeof raw === 'string') return raw; // Selten: direkter String-Wert
+      if (typeof raw === 'number' && raw >= 0 && raw < payload.length) {
+        const target = payload[raw];
+        if (typeof target === 'string') return target;
+      }
+    }
+  }
+  return null;
+}
+
 async function scrapeNeura(): Promise<JobInput[]> {
   // Neuer Neura-Aufbau (Stand nach Frontend-Umbau auf api.my-job-shop.com):
-  //   1. HTML der Karriere-Seite fetchen — enthält jobShopId + tenantId + vanity
-  //      im eingebetteten Nuxt-Payload.
+  //   1. HTML der Karriere-Seite fetchen; darin __NUXT_DATA__ als JSON-Payload.
+  //      Payload enthält jobShopId (UUID), tenantId (UUID), jobShopCompanyVanity.
+  //      Werte stehen als Index-Referenzen: {"tenantId": 346} → payload[346].
   //   2. POST /api/offer/v1/search/api-key?filter=backoffice_vanity:<vanity>
   //      mit Header X-Tenant-Id → liefert einen frischen Typesense-Key.
   //   3. POST /api/typesense/multi_search mit Headers X-Tenant-Id,
@@ -555,18 +573,34 @@ async function scrapeNeura(): Promise<JobInput[]> {
   const PAGE = 'https://jobs.neura-robotics.com/search';
   const html = await fetchText(PAGE);
 
-  const jobShopMatch = html.match(/typesenseApiKey-([a-f0-9-]{36})/);
-  if (!jobShopMatch) throw new Error('Neura: jobShopId nicht im HTML gefunden');
-  const jobShopId = jobShopMatch[1];
+  // Nuxt-Payload aus <script id="__NUXT_DATA__" type="application/json">[…]</script>
+  const payloadMatch = html.match(/<script[^>]*\bid=["']__NUXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/);
+  let payload: unknown[] | null = null;
+  if (payloadMatch) {
+    try {
+      const parsed = JSON.parse(payloadMatch[1]);
+      if (Array.isArray(parsed)) payload = parsed;
+    } catch { /* Payload nicht parsbar */ }
+  }
 
-  const tenantMatch = html.match(/"tenantId"\s*:\s*"([a-f0-9-]{36})"/);
-  if (!tenantMatch) throw new Error('Neura: tenantId (UUID) nicht im HTML gefunden');
-  const tenantId = tenantMatch[1];
+  // jobShopId: primär aus dem Payload, sonst aus dem "typesenseApiKey-<UUID>"-String
+  let jobShopId = payload ? resolveNuxtPayloadValue(payload, 'jobShopId') : null;
+  if (!jobShopId) {
+    const m = html.match(/typesenseApiKey-([a-f0-9-]{36})/);
+    jobShopId = m?.[1] ?? null;
+  }
+  if (!jobShopId) throw new Error('Neura: jobShopId nicht im HTML gefunden');
 
-  const vanityMatch =
-    html.match(/"jobShopCompanyVanity"\s*:\s*"([^"]+)"/) ||
-    html.match(/backoffice_vanity:=?"?([a-zA-Z0-9_-]+)/);
-  const vanity = vanityMatch?.[1] ?? 'karriere';
+  // tenantId: nur via Payload-Ref-Resolving auffindbar (im Nuxt-Payload als Zahl)
+  const tenantId = payload ? resolveNuxtPayloadValue(payload, 'tenantId') : null;
+  if (!tenantId) throw new Error('Neura: tenantId (UUID) nicht via Nuxt-Payload gefunden');
+
+  // vanity: primär Payload, dann Fallbacks
+  let vanity = payload ? resolveNuxtPayloadValue(payload, 'jobShopCompanyVanity') : null;
+  if (!vanity) {
+    const m = html.match(/backoffice_vanity:=?"?([a-zA-Z0-9_-]+)/);
+    vanity = m?.[1] ?? 'karriere';
+  }
 
   const keyUrl = `https://api.my-job-shop.com/api/offer/v1/search/api-key?filter=${encodeURIComponent(`backoffice_vanity:${vanity}`)}`;
   const keyRes = await fetch(keyUrl, {
