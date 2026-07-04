@@ -12,6 +12,7 @@
     "cleanup": "tsx scripts/cleanup-blacklist.ts",
     "clear-enrichment": "tsx scripts/clear-enrichment.ts",
     "reset-rejected": "tsx scripts/reset-rejected.ts",
+    "inspect-neura": "tsx scripts/inspect-neura.ts",
     "reset": "tsx scripts/reset.ts"
   },
   "dependencies": {
