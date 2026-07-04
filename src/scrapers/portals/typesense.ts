@@ -28,6 +28,9 @@ export interface TypesenseConfig {
   maxPages?: number;
   /** Origin/Referer-Host der Karriereseite (für CORS-Header). */
   originHost?: string;
+  /** Zusatz-Header, z.B. X-Tenant-Id / X-JobShop-Id / X-Typesense-Api-Key
+   *  bei my-job-shop.com's neuem Refresh-Pattern (statt Key als Query-Param). */
+  extraHeaders?: Record<string, string>;
 }
 
 function defaultTitle(doc: Record<string, any>): string | null {
@@ -59,8 +62,12 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
     const body = JSON.parse(JSON.stringify(cfg.searchBody));
     for (const s of body.searches) s.page = page;
 
+    // Wenn extraHeaders gesetzt sind, gehen wir davon aus dass der Key als
+    // Header kommt (z.B. X-Typesense-Api-Key) → Content-Type darf JSON sein.
+    // Ohne extraHeaders sind wir im alten Query-Param-Modus mit text/plain
+    // als CORS-Preflight-Bypass.
     const headers: Record<string, string> = {
-      'content-type': 'text/plain',
+      'content-type': cfg.extraHeaders ? 'application/json' : 'text/plain',
       accept: 'application/json, text/plain, */*',
       'accept-language': 'en-US,en;q=0.9',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
@@ -69,6 +76,7 @@ export async function scrapeTypesense(cfg: TypesenseConfig): Promise<JobInput[]>
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'cross-site',
+      ...(cfg.extraHeaders ?? {}),
     };
 
     const res = await fetch(cfg.apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });

@@ -18,7 +18,6 @@ import { scrapeGenericHtml } from './portals/genericHtml';
 import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeTypesense } from './portals/typesense';
 import { scrapeRecruitee } from './portals/recruitee';
-import { discoverTypesenseUrl } from './discoverTypesenseKey';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { extractInlineJson } from './inlineJson';
 
@@ -545,21 +544,59 @@ async function scrapeMTU(): Promise<JobInput[]> {
   return out;
 }
 
-// Hardcoded letzte bekannte URL als allerletzter Fallback. Wird nur genutzt
-// wenn HTML/JS-Discovery und scraper-secrets.json beide nichts liefern.
-const NEURA_TYPESENSE_FALLBACK = 'https://api.my-job-shop.com/api/typesense/multi_search?x-typesense-api-key=LzVtSVA3dU5nK2Q5ck5oRklpTnBYdDhUaXZEMnFjY1hYaEdrU2hIQytBUT1sejlxeyJmaWx0ZXJfYnkiOiJ0ZW5hbnRfaWQ6PW5ldXJhLXJvYm90aWNzJiZiYWNrb2ZmaWNlX3Zhbml0eTo9a2FycmllcmUmJnN0YXR1czo9QUNUSVZFIn0%3D';
-
 async function scrapeNeura(): Promise<JobInput[]> {
-  // Selbstheilend: Discovery holt den aktuellen Scoped-Key aus dem HTML/JS-Bundle
-  // der Search-Seite, fällt sonst auf scraper-secrets.json oder den Fallback zurück.
-  const apiUrl = await discoverTypesenseUrl({
-    pageUrl: 'https://jobs.neura-robotics.com/search',
-    secretsKey: 'neuraTypesenseUrl',
-    hardcodedFallback: NEURA_TYPESENSE_FALLBACK,
+  // Neuer Neura-Aufbau (Stand nach Frontend-Umbau auf api.my-job-shop.com):
+  //   1. HTML der Karriere-Seite fetchen — enthält jobShopId + tenantId + vanity
+  //      im eingebetteten Nuxt-Payload.
+  //   2. POST /api/offer/v1/search/api-key?filter=backoffice_vanity:<vanity>
+  //      mit Header X-Tenant-Id → liefert einen frischen Typesense-Key.
+  //   3. POST /api/typesense/multi_search mit Headers X-Tenant-Id,
+  //      X-JobShop-Id, X-Typesense-Api-Key (Key NICHT mehr Query-Param).
+  const PAGE = 'https://jobs.neura-robotics.com/search';
+  const html = await fetchText(PAGE);
+
+  const jobShopMatch = html.match(/typesenseApiKey-([a-f0-9-]{36})/);
+  if (!jobShopMatch) throw new Error('Neura: jobShopId nicht im HTML gefunden');
+  const jobShopId = jobShopMatch[1];
+
+  const tenantMatch = html.match(/"tenantId"\s*:\s*"([a-f0-9-]{36})"/);
+  if (!tenantMatch) throw new Error('Neura: tenantId (UUID) nicht im HTML gefunden');
+  const tenantId = tenantMatch[1];
+
+  const vanityMatch =
+    html.match(/"jobShopCompanyVanity"\s*:\s*"([^"]+)"/) ||
+    html.match(/backoffice_vanity:=?"?([a-zA-Z0-9_-]+)/);
+  const vanity = vanityMatch?.[1] ?? 'karriere';
+
+  const keyUrl = `https://api.my-job-shop.com/api/offer/v1/search/api-key?filter=${encodeURIComponent(`backoffice_vanity:${vanity}`)}`;
+  const keyRes = await fetch(keyUrl, {
+    headers: {
+      accept: 'application/json',
+      'x-tenant-id': tenantId,
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
+      origin: 'https://jobs.neura-robotics.com',
+      referer: 'https://jobs.neura-robotics.com/',
+    },
   });
+  if (!keyRes.ok) {
+    const body = await keyRes.text().catch(() => '');
+    throw new Error(`Neura Key-Endpoint HTTP ${keyRes.status}${body ? ' – ' + body.slice(0, 200) : ''}`);
+  }
+  const keyPayload = (await keyRes.json()) as any;
+  const apiKey: string | undefined =
+    keyPayload?.key ?? keyPayload?.data?.key ?? keyPayload?.data?.apiKey ?? keyPayload?.apiKey;
+  if (!apiKey || typeof apiKey !== 'string') {
+    throw new Error(`Neura Key-Endpoint: kein Key im Response (${JSON.stringify(keyPayload).slice(0, 200)})`);
+  }
+
   return scrapeTypesense({
     company: 'Neura Robotics',
-    apiUrl,
+    apiUrl: 'https://api.my-job-shop.com/api/typesense/multi_search',
+    extraHeaders: {
+      'x-tenant-id': tenantId,
+      'x-jobshop-id': jobShopId,
+      'x-typesense-api-key': apiKey,
+    },
     searchBody: {
       searches: [{
         collection: 'offers',
@@ -576,7 +613,6 @@ async function scrapeNeura(): Promise<JobInput[]> {
     buildDetailUrl: (doc) => {
       // Beobachtete Detail-URL aus dem DOM:
       //   https://jobs.neura-robotics.com/de/offer-redirect/?offerApiId={base64(external_id)}&showApplicationForm=false
-      // Falls external_id fehlt: auf vorhandene URL-Felder zurückfallen.
       if (typeof doc.url === 'string' && doc.url.startsWith('http')) return doc.url;
       if (typeof doc.permalink === 'string' && doc.permalink.startsWith('http')) return doc.permalink;
       const id = doc.external_id ?? doc.id ?? doc.slug;
@@ -584,7 +620,7 @@ async function scrapeNeura(): Promise<JobInput[]> {
       const encoded = Buffer.from(String(id), 'utf8').toString('base64');
       return `https://jobs.neura-robotics.com/de/offer-redirect/?offerApiId=${encodeURIComponent(encoded)}&showApplicationForm=false`;
     },
-    sourcePortal: 'typesense',
+    sourcePortal: 'typesense-hdr',
   });
 }
 
