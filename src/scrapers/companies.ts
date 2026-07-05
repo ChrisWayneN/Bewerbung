@@ -36,7 +36,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'phenom',         status: '❌', note: 'Phenom-API tot – Siemens ist auf Avature migriert (URLs unter /en_US/externaljobs/..., z.B. JobDetail/<id>). Struktur noch unbekannt, da Sandbox-Egress die Seite blockt. Diagnose: npm run inspect-siemens lokal laufen lassen und Output hier posten.' },
+  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '⚠️', note: 'Avature SSR-HTML. Kein direktes Location-Facet per POST setzbar (Cascading-Dropdown), daher Volltextsuche (name="search") mit "München" + "Munich" gemerged, dann isMunichArea()-Filter auf list-item-jobCity. Lücke: Postings ohne "München"/"Munich" im Volltext werden nicht gefunden.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
@@ -153,57 +153,60 @@ async function scrapeQuantum(): Promise<JobInput[]> {
   });
 }
 
+const SIEMENS_SEARCH_URL = 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs';
+
+/** Siemens (Avature, SSR-HTML) hat kein Location-Facet ohne vorherige
+ *  Country/State-Auswahl (Cascading-Dropdown mit intern aufgelösten IDs,
+ *  nicht per einfachem POST-Param setzbar). Das Volltextfeld "Keywords or
+ *  skills" (name="search") durchsucht aber auch den Ort, und filtert damit
+ *  serverseitig brauchbar vor. Deutsche und englische Schreibweise liefern
+ *  unterschiedliche Treffer (unterschiedliche Postings erwähnen "München"
+ *  bzw. "Munich"), daher beide Begriffe abfragen und mergen. isMunichArea()
+ *  filtert danach nochmal hart über das echte Location-Feld – Lücke bleibt:
+ *  Postings, die weder "München" noch "Munich" im Volltext enthalten,
+ *  tauchen in keiner der beiden Suchen auf.
+ */
+async function fetchSiemensSearch(term: string): Promise<JobInput[]> {
+  const html = await fetchText(SIEMENS_SEARCH_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      search: term,
+      folderSort: '',
+      folderSortDirection: '',
+      listFilterMode: '',
+      jobRecordsPerPage: '50',
+    }).toString(),
+  });
+  const $ = cheerio.load(html);
+  const out: JobInput[] = [];
+  $('article.article--result').each((_, el) => {
+    const $el = $(el);
+    const a = $el.find('a.link[href*="JobDetail"]').first();
+    const href = a.attr('href');
+    const title = a.text().trim().replace(/\s+/g, ' ');
+    const city = $el.find('.list-item-jobCity').first().text().trim();
+    if (!href || !title) return;
+    const job: JobInput = {
+      company: 'Siemens',
+      title,
+      location: city || 'München',
+      url: href,
+      source_portal: 'avature-html',
+    };
+    job.hash = hashJob(job);
+    out.push(job);
+  });
+  return out;
+}
+
 async function scrapeSiemens(): Promise<JobInput[]> {
-  // Alte Phenom-People-Endpoints (bis ~2025). Siemens ist seither auf Avature
-  // migriert (jobs.siemens.com/en_US/externaljobs/SearchJobs, JobDetail/<id>).
-  // Die genaue Avature-DOM/API-Struktur ist unbekannt, weil Sandbox-Egress
-  // die Seite blockt (403 auch über WebFetch). Diagnose: npm run inspect-siemens
-  // lokal laufen lassen, Output posten, dann echten Avature-Scraper bauen.
-  const candidates = [
-    'https://jobs.siemens.com/api/jobs?domain=siemens.com&location=Munich%2C+Germany&locationName=Munich%2C+Germany&radius=30&num=100&start=0',
-    'https://jobs.siemens.com/api/jobs?domain=siemens.com&keyword=&location=Munich&radius=30&num=100',
-    'https://jobs.siemens.com/widgets?domain=siemens.com&ddoKey=refineSearch&location=Munich%2C+Germany&radius=30&num=100',
-    'https://jobs.siemens.com/api/jobs?keyword=&location=Munich%2C+Germany&radius=30&num=100',
-  ];
-  for (const url of candidates) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          accept: 'application/json, text/plain, */*',
-          'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          referer: 'https://jobs.siemens.com/careers',
-        },
-      });
-      if (!res.ok) continue;
-      const text = await res.text();
-      // Versuche JSON, sonst skip
-      let data: any;
-      try { data = JSON.parse(text); } catch { continue; }
-      const arr = data?.refineSearch?.data?.jobs ?? data?.jobs ?? [];
-      if (!Array.isArray(arr) || !arr.length) continue;
-      const out: JobInput[] = [];
-      for (const item of arr) {
-        const d: any = item.data ?? item;
-        const title = d.title || d.jobTitle;
-        const loc = d.city ? `${d.city}${d.state ? ', ' + d.state : ''}` : d.location;
-        const path = d.applyUrl || d.url || (d.jobId ? `https://jobs.siemens.com/jobs/${d.jobId}` : null);
-        if (!title || !path) continue;
-        const job: JobInput = {
-          company: 'Siemens',
-          title,
-          location: loc ?? 'München',
-          url: path.startsWith('http') ? path : `https://jobs.siemens.com${path}`,
-          source_portal: 'phenom',
-          description_raw: d.description ?? null,
-        };
-        job.hash = hashJob(job);
-        out.push(job);
-      }
-      if (out.length) return out;
-    } catch { /* probiere nächste URL */ }
+  const byUrl = new Map<string, JobInput>();
+  for (const term of ['München', 'Munich']) {
+    const jobs = await fetchSiemensSearch(term);
+    for (const job of jobs) byUrl.set(job.url, job);
   }
-  throw new Error('Siemens: Phenom-API tot (Migration zu Avature). npm run inspect-siemens laufen lassen für Diagnose.');
+  return Array.from(byUrl.values()).filter(j => isMunichArea(j.location));
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
