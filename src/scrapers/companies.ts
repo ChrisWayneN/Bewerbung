@@ -36,7 +36,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '⚠️', note: 'Avature SSR-HTML. Kein direktes Location-Facet per POST setzbar (Cascading-Dropdown), daher Volltextsuche (name="search") mit "München" + "Munich" gemerged, dann isMunichArea()-Filter auf list-item-jobCity. Lücke: Postings ohne "München"/"Munich" im Volltext werden nicht gefunden.' },
+  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit echten Location-Facet-IDs (Country=Germany/812132, State=Bavaria/813141, City=München/912803) aus Browser-Netzwerk-Analyse, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
@@ -155,29 +155,31 @@ async function scrapeQuantum(): Promise<JobInput[]> {
 
 const SIEMENS_SEARCH_URL = 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs';
 
-/** Siemens (Avature, SSR-HTML) hat kein Location-Facet ohne vorherige
- *  Country/State-Auswahl (Cascading-Dropdown mit intern aufgelösten IDs,
- *  nicht per einfachem POST-Param setzbar). Das Volltextfeld "Keywords or
- *  skills" (name="search") durchsucht aber auch den Ort, und filtert damit
- *  serverseitig brauchbar vor. Deutsche und englische Schreibweise liefern
- *  unterschiedliche Treffer (unterschiedliche Postings erwähnen "München"
- *  bzw. "Munich"), daher beide Begriffe abfragen und mergen. isMunichArea()
- *  filtert danach nochmal hart über das echte Location-Feld – Lücke bleibt:
- *  Postings, die weder "München" noch "Munich" im Volltext enthalten,
- *  tauchen in keiner der beiden Suchen auf.
- */
-async function fetchSiemensSearch(term: string): Promise<JobInput[]> {
-  const html = await fetchText(SIEMENS_SEARCH_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      search: term,
-      folderSort: '',
-      folderSortDirection: '',
-      listFilterMode: '',
-      jobRecordsPerPage: '50',
-    }).toString(),
+/** Siemens (Avature, SSR-HTML). Die Volltextsuche nach "München"/"Munich"
+ *  lieferte zu viele False-Positives (Stellen, die den Ort nur im
+ *  Übersetzungstext erwähnen, aber woanders sind). Robuster: die echten
+ *  Location-Facet-IDs verwenden, die aus der Browser-Netzwerk-Analyse
+ *  stammen (Country=Germany/812132, State=Bavaria/813141, City=München/
+ *  912803) – Avature unterstützt GET mit diesen Query-Params direkt
+ *  (kein POST/Session-State nötig). "Field of work" und "Experience Level"
+ *  werden bewusst weggelassen, um wie bei den anderen Firmen ALLE Münchner
+ *  Stellen zu bekommen statt nur bestimmte Kategorien/Level.
+ *  Falls Siemens die IDs mal rotiert: neue URL per DevTools (Netzwerk-
+ *  Analyse) beim manuellen Filtern auf München nachschauen und die drei
+ *  Facet-IDs unten ersetzen. */
+async function scrapeSiemens(): Promise<JobInput[]> {
+  const params = new URLSearchParams({
+    '42386': '[812132]', // Country: Germany
+    '42386_format': '17546',
+    '42387': '[813141]', // State: Bavaria
+    '42387_format': '17547',
+    '42388': '[912803]', // City: München
+    '42388_format': '17879',
+    listFilterMode: '1',
+    folderRecordsPerPage: '100',
   });
+  const url = `${SIEMENS_SEARCH_URL}/?${params.toString()}`;
+  const html = await fetchText(url);
   const $ = cheerio.load(html);
   const out: JobInput[] = [];
   $('article.article--result').each((_, el) => {
@@ -197,16 +199,10 @@ async function fetchSiemensSearch(term: string): Promise<JobInput[]> {
     job.hash = hashJob(job);
     out.push(job);
   });
-  return out;
-}
-
-async function scrapeSiemens(): Promise<JobInput[]> {
-  const byUrl = new Map<string, JobInput>();
-  for (const term of ['München', 'Munich']) {
-    const jobs = await fetchSiemensSearch(term);
-    for (const job of jobs) byUrl.set(job.url, job);
+  if (out.length === 0) {
+    console.log(`  [debug Siemens] 0 Treffer über Facet-URL – IDs evtl. rotiert, HTML-Länge: ${html.length}`);
   }
-  return Array.from(byUrl.values()).filter(j => isMunichArea(j.location));
+  return out.filter(j => isMunichArea(j.location));
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
