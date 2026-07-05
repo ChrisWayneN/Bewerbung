@@ -2,7 +2,8 @@
  *  geführt; intern als Filter-Value "kat:<Name>" übergeben. listJobs
  *  übersetzt das zu company IN (...). */
 export const COMPANY_CATEGORIES: Record<string, string[]> = {
-  'Rüstung':  ['Hensoldt', 'IABG', 'Helsing', 'Isar Aerospace', 'Quantum Systems', 'Diehl', 'MTU', 'KNDS'],
-  'Robotik':  ['Agile Robots SE', 'Neura Robotics', 'Franka Robotics'],
-  'Mixed':    ['Siemens', 'Rohde & Schwarz'],
+  'Rüstung':           ['Hensoldt', 'IABG', 'Helsing', 'Quantum Systems', 'Diehl', 'KNDS'],
+  'Robotik':           ['Agile Robots SE', 'Neura Robotics', 'Franka Robotics'],
+  'Luft- und Raumfahrt': ['Airbus', 'MTU', 'Isar Aerospace'],
+  'Mixed':             ['Siemens', 'Rohde & Schwarz'],
 };
