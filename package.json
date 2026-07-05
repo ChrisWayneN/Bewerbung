@@ -13,6 +13,7 @@
     "clear-enrichment": "tsx scripts/clear-enrichment.ts",
     "reset-rejected": "tsx scripts/reset-rejected.ts",
     "inspect-neura": "tsx scripts/inspect-neura.ts",
+    "inspect-siemens": "tsx scripts/inspect-siemens.ts",
     "reset": "tsx scripts/reset.ts"
   },
   "dependencies": {

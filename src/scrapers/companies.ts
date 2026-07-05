@@ -36,7 +36,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/',                            portal: 'phenom',         status: '✅', note: 'Phenom People JSON: /api/jobs' },
+  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'phenom',         status: '❌', note: 'Phenom-API tot – Siemens ist auf Avature migriert (URLs unter /en_US/externaljobs/..., z.B. JobDetail/<id>). Struktur noch unbekannt, da Sandbox-Egress die Seite blockt. Diagnose: npm run inspect-siemens lokal laufen lassen und Output hier posten.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
@@ -154,8 +154,11 @@ async function scrapeQuantum(): Promise<JobInput[]> {
 }
 
 async function scrapeSiemens(): Promise<JobInput[]> {
-  // Siemens nutzt Phenom People. Wesentlicher Parameter: domain=siemens.com.
-  // Probiere mehrere bekannte Phenom-Endpoint-Varianten.
+  // Alte Phenom-People-Endpoints (bis ~2025). Siemens ist seither auf Avature
+  // migriert (jobs.siemens.com/en_US/externaljobs/SearchJobs, JobDetail/<id>).
+  // Die genaue Avature-DOM/API-Struktur ist unbekannt, weil Sandbox-Egress
+  // die Seite blockt (403 auch über WebFetch). Diagnose: npm run inspect-siemens
+  // lokal laufen lassen, Output posten, dann echten Avature-Scraper bauen.
   const candidates = [
     'https://jobs.siemens.com/api/jobs?domain=siemens.com&location=Munich%2C+Germany&locationName=Munich%2C+Germany&radius=30&num=100&start=0',
     'https://jobs.siemens.com/api/jobs?domain=siemens.com&keyword=&location=Munich&radius=30&num=100',
@@ -200,7 +203,7 @@ async function scrapeSiemens(): Promise<JobInput[]> {
       if (out.length) return out;
     } catch { /* probiere nächste URL */ }
   }
-  throw new Error('Siemens: kein funktionierender API-Endpoint gefunden – Karriereseite per DevTools auf XHR/JSON-URL prüfen');
+  throw new Error('Siemens: Phenom-API tot (Migration zu Avature). npm run inspect-siemens laufen lassen für Diagnose.');
 }
 
 async function scrapeKNDS(): Promise<JobInput[]> {
