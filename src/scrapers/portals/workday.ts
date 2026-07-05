@@ -36,6 +36,11 @@ export interface WorkdayConfig {
   site: string;            // e.g. 'Airbus'
   searchText?: string;
   pageSize?: number;
+  /** Server-seitige Workday-Facetten (z.B. locationCountry/locations/jobFamilyGroup),
+   *  IDs aus der Browser-Netzwerk-Analyse der gefilterten Karriereseite. Wenn gesetzt,
+   *  wird NUR dieser Body probiert (kein ungefilterter Fallback), damit die Facetten
+   *  garantiert greifen statt versehentlich auf ungefilterte Ergebnisse zurückzufallen. */
+  appliedFacets?: Record<string, string[]>;
 }
 
 export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Promise<JobInput[]> {
@@ -56,13 +61,17 @@ export async function scrapeWorkday(cfg: WorkdayConfig, fetchDetails = true): Pr
   let firstCall = true;
 
   while (offset < total) {
-    const bodies: object[] = [
-      { appliedFacets: {}, limit, offset, searchText: cfg.searchText ?? '' },
-      { appliedFacets: { locations: [], jobFamilyGroup: [] }, limit, offset, searchText: cfg.searchText ?? '' },
-      { limit, offset, searchText: cfg.searchText ?? '' },
-      { appliedFacets: {}, limit, offset },
-      { limit, offset },
-    ];
+    // Wenn Facetten vorgegeben sind: NUR diesen Body probieren, damit nicht
+    // versehentlich auf einen ungefilterten Fallback-Body zurückgefallen wird.
+    const bodies: object[] = cfg.appliedFacets
+      ? [{ appliedFacets: cfg.appliedFacets, limit, offset, searchText: cfg.searchText ?? '' }]
+      : [
+          { appliedFacets: {}, limit, offset, searchText: cfg.searchText ?? '' },
+          { appliedFacets: { locations: [], jobFamilyGroup: [] }, limit, offset, searchText: cfg.searchText ?? '' },
+          { limit, offset, searchText: cfg.searchText ?? '' },
+          { appliedFacets: {}, limit, offset },
+          { limit, offset },
+        ];
     let data: WorkdayList | null = null;
     let lastStatus = 0;
 

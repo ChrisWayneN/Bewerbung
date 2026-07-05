@@ -38,7 +38,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit echten Location-Facet-IDs (Country=Germany/812132, State=Bavaria/813141, City=München/912803) aus Browser-Netzwerk-Analyse, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
-  { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/Airbus',              portal: 'workday',        status: '✅', note: 'wd3, tenant=ag, site=Airbus' },
+  { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995&locations=f5811cef9cb501a49eac0a694c0a8244&jobFamilyGroup=f5811cef9cb5018463377f3f550a1bf2&jobFamilyGroup=f5811cef9cb501e5d34e803f550a21f2', portal: 'workday', status: '✅', note: 'wd3, tenant=ag, site=Airbus. Server-seitige appliedFacets: München-Standort + 2 bewusst gewählte Job-Familien (nicht alle Kategorien).' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
   { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
@@ -64,7 +64,20 @@ function linkOnly(meta: CompanyMeta): JobInput {
 /* ---------------- Per-company scrapers ---------------- */
 
 async function scrapeAirbus(): Promise<JobInput[]> {
-  return scrapeWorkday({ company: 'Airbus', tenant: 'ag', wd: 3, site: 'Airbus' }, true);
+  // Facet-IDs aus der Browser-Netzwerk-Analyse der gefilterten Karriereseite:
+  // Standort München (Germany + spezifischer Standort) + zwei Job-Familien
+  // (bewusst gewählt, nicht "alle Kategorien" wie bei anderen Firmen).
+  return scrapeWorkday({
+    company: 'Airbus',
+    tenant: 'ag',
+    wd: 3,
+    site: 'Airbus',
+    appliedFacets: {
+      locationCountry: ['dcc5b7608d8644b3a93716604e78e995'],
+      locations: ['f5811cef9cb501a49eac0a694c0a8244'],
+      jobFamilyGroup: ['f5811cef9cb5018463377f3f550a1bf2', 'f5811cef9cb501e5d34e803f550a21f2'],
+    },
+  }, true);
 }
 
 async function scrapeHensoldt(): Promise<JobInput[]> {
