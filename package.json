@@ -14,6 +14,7 @@
     "reset-rejected": "tsx scripts/reset-rejected.ts",
     "inspect-neura": "tsx scripts/inspect-neura.ts",
     "inspect-siemens": "tsx scripts/inspect-siemens.ts",
+    "inspect-hensoldt": "tsx scripts/inspect-hensoldt.ts",
     "reset": "tsx scripts/reset.ts"
   },
   "dependencies": {
