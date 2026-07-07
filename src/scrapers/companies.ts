@@ -34,7 +34,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html', portal: 'paulsjob-html',  status: '✅', note: 'paulsjob.ai-Backend, server-rendered. Pagination per &offset=N in 30er-Schritten (Lazy-Load).' },
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet) – Liste unter showJobOfferList.do, <tr class=joboffer>' },
   { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
-  { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors Career Search · Standorte Fürstenfeldbruck/Taufkirchen' },
+  { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE&optionsFacetsDD_customfield2=Engineering&optionsFacetsDD_customfield1=Professionals', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors, job-tile-DOM. Facetten: country=DE + Engineering (customfield2) + Professionals (customfield1); Standort clientseitig via isMunichArea (Fürstenfeldbruck/Taufkirchen/Ottobrunn). Filter anpassbar über customfield1/2.' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit echten Location-Facet-IDs (Country=Germany/812132, State=Bavaria/813141, City=München/912803) aus Browser-Netzwerk-Analyse, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
@@ -81,16 +81,33 @@ async function scrapeAirbus(): Promise<JobInput[]> {
 }
 
 async function scrapeHensoldt(): Promise<JobInput[]> {
-  // Hensoldt nutzt SAP SuccessFactors Career Search unter jobs.hensoldt.net.
-  // Wir holen alle DE-Stellen (ohne Standort-Filter, damit Hensoldt-München-Standorte
-  // wie Fürstenfeldbruck + Taufkirchen reinkommen) und lassen unseren Munich-Filter laufen.
+  // Hensoldt nutzt SAP SuccessFactors (jobs.hensoldt.net) mit "job-tile"-DOM.
+  // Server-seitige Facetten (aus der gefilterten Karriereseite-URL des Nutzers):
+  // country=DE + Berufsfeld Engineering (customfield2) + Level Professionals
+  // (customfield1). Standort wird BEWUSST nicht server-seitig gesetzt, damit
+  // alle Münchner Hensoldt-Standorte (Taufkirchen, Ottobrunn, Fürstenfeldbruck …)
+  // reinkommen; isMunichArea() filtert danach clientseitig.
+  //
+  // Zwei DOM-Fallen, die per inspect-hensoldt bestätigt wurden:
+  //   • Jede Kachel steht 3× im HTML (Desktop/Tablet/Mobile-Layout) → über
+  //     li.job-tile iterieren (1× pro Job) statt über a.jobTitle-link (3×).
+  //   • Der Ortswert steht sauber im [id*="-multilocation-value"]-Div; das
+  //     umgebende .multilocation enthält zusätzlich das Label "Locations".
+  // Kein pageAdded===0-Abbruch mehr: mit Berufsfeld-Filter kann eine ganze
+  // Seite ohne München-Treffer vorkommen (z.B. lauter Ulm) – trotzdem
+  // weiterblättern, sonst gehen spätere Münchner Stellen verloren.
   const baseUrl = 'https://jobs.hensoldt.net';
+  const facets =
+    'createNewAlert=false&q=' +
+    '&optionsFacetsDD_country=DE' +
+    '&optionsFacetsDD_customfield2=Engineering' +
+    '&optionsFacetsDD_customfield1=Professionals';
   const out: JobInput[] = [];
   const seen = new Set<string>();
   const pageSize = 25;
 
-  for (let startrow = 0; startrow < 500; startrow += pageSize) {
-    const url = `${baseUrl}/search/?createNewAlert=false&q=&optionsFacetsDD_country=DE&startrow=${startrow}`;
+  for (let startrow = 0; startrow < 1000; startrow += pageSize) {
+    const url = `${baseUrl}/search/?${facets}&startrow=${startrow}`;
     let html: string;
     try {
       html = await fetchText(url);
@@ -98,25 +115,27 @@ async function scrapeHensoldt(): Promise<JobInput[]> {
       break;
     }
     const $ = cheerio.load(html);
-    const links = $('a.jobTitle-link, a[id*="jobTitle"]');
-    if (!links.length) break;
+    const tiles = $('li.job-tile');
+    if (!tiles.length) break;
 
-    let pageAdded = 0;
-    links.each((_, a) => {
-      const $a = $(a);
-      const href = $a.attr('href');
-      if (!href) return;
-      const title = $a.text().trim().replace(/\s+/g, ' ');
-      if (!title) return;
-      const row = $a.closest('tr, li, .data-row, .job-tile, .jobItem, article');
-      const location = (
-        row.find('.jobLocation, [class*="location" i]').first().text() ||
-        row.text()
-      ).trim().replace(/\s+/g, ' ');
-      if (!isMunichArea(location)) return;
-      const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+    tiles.each((_, el) => {
+      const $tile = $(el);
+      const dataUrl = $tile.attr('data-url') || $tile.find('a.jobTitle-link').first().attr('href') || '';
+      if (!dataUrl) return;
+      const fullUrl = dataUrl.startsWith('http') ? dataUrl : new URL(dataUrl, baseUrl).toString();
       if (seen.has(fullUrl)) return;
       seen.add(fullUrl);
+
+      const title = $tile.find('a.jobTitle-link').first().text().trim().replace(/\s+/g, ' ');
+      if (!title) return;
+
+      // Sauberer Ortswert aus dem -value-Div (ohne "Locations"-Label davor).
+      const location = (
+        $tile.find('[id*="-multilocation-value"]').first().text() ||
+        $tile.find('.multilocation').first().text().replace(/^\s*Locations\s*/i, '')
+      ).trim().replace(/\s+/g, ' ');
+      if (!isMunichArea(location)) return;
+
       const job: JobInput = {
         company: 'Hensoldt',
         title,
@@ -126,25 +145,14 @@ async function scrapeHensoldt(): Promise<JobInput[]> {
       };
       job.hash = hashJob(job);
       out.push(job);
-      pageAdded++;
     });
 
-    if (links.length < pageSize) break;
-    if (pageAdded === 0 && startrow > 0) break;
+    if (tiles.length < pageSize) break;
   }
 
   if (out.length === 0) {
-    console.log(`  [debug Hensoldt] 0 Treffer:`);
-    try {
-      const dbgHtml = await fetchText(`${baseUrl}/search/?createNewAlert=false&q=&optionsFacetsDD_country=DE`);
-      const $ = cheerio.load(dbgHtml);
-      console.log(`    HTML ${dbgHtml.length} bytes · a.jobTitle-link: ${$('a.jobTitle-link').length} · alle a[href*="/job/"]: ${$('a[href*="/job/"]').length}`);
-      const samples: string[] = [];
-      $('a[href]').each((_, a) => { if (samples.length < 5) samples.push($(a).attr('href') || ''); });
-      console.log(`    Erste hrefs: ${samples.join(' | ')}`);
-    } catch (e) { console.log(`    HTML-Fetch fehlgeschlagen: ${(e as Error).message}`); }
+    console.log(`  [debug Hensoldt] 0 Treffer – Facetten/DOM per "npm run inspect-hensoldt" prüfen.`);
   }
-
   return out;
 }
 
