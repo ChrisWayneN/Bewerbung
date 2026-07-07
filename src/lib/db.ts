@@ -438,14 +438,24 @@ export function getScraperStatuses(): { company: string; status: string; last_ru
  *  Wird nach einem erfolgreichen Scrape aufgerufen, um Geister-Einträge
  *  (frühere Fehlmatches oder offline genommene Stellen) zu entfernen.
  *  Nur aufrufen, wenn der Scrape mindestens eine Stelle geliefert hat,
- *  damit ein leerer/kaputter Lauf nicht die ganze Firma leert. */
+ *  damit ein leerer/kaputter Lauf nicht die ganze Firma leert.
+ *  Stellen mit aktivem Status (gelesen/beworben/prozess) oder Bewertung sind
+ *  vom Prune ausgenommen – die dürfen nicht verschwinden, nur weil ein
+ *  Scrape-Lauf sie mal nicht liefert (Karriereseite offline genommen,
+ *  Pagination-Hickup, Blacklist-Update). status_urls überlebt zwar den
+ *  Prune, aber nur um den Status wiederherzustellen falls die URL erneut
+ *  auftaucht – verschwindet sie für immer, war die Stelle sonst komplett weg. */
 export function deleteStaleJobsForCompany(company: string, keepUrls: Iterable<string>): { deleted: number; samples: string[] } {
   const keep = new Set(keepUrls);
   const db = getDb();
-  const all = db.prepare('SELECT id, title, url FROM jobs WHERE company = ?').all(company) as { id: number; title: string; url: string }[];
+  const all = db.prepare('SELECT id, title, url, status, rating FROM jobs WHERE company = ?').all(company) as
+    { id: number; title: string; url: string; status: string | null; rating: string | null }[];
   const toDelete: { id: number; title: string }[] = [];
   for (const row of all) {
-    if (!keep.has(row.url)) toDelete.push({ id: row.id, title: row.title });
+    if (keep.has(row.url)) continue;
+    if (row.status && row.status !== 'abgelehnt') continue;
+    if (row.rating) continue;
+    toDelete.push({ id: row.id, title: row.title });
   }
   if (!toDelete.length) return { deleted: 0, samples: [] };
   const tx = db.transaction((ids: number[]) => {
@@ -457,7 +467,10 @@ export function deleteStaleJobsForCompany(company: string, keepUrls: Iterable<st
 }
 
 /** Löscht alle Jobs, deren Titel eines der Blacklist-Keywords als Phrase enthält
- *  (case-insensitive, Trenner-tolerant, Wortgrenzen-Match für kurze Begriffe ≤ 3 Zeichen). */
+ *  (case-insensitive, Trenner-tolerant, Wortgrenzen-Match für kurze Begriffe ≤ 3 Zeichen).
+ *  Stellen mit aktivem Status (gelesen/beworben/prozess) oder Bewertung sind
+ *  ausgenommen – ein nachträglich erweitertes Blacklist-Wort darf keine
+ *  bereits verfolgte Bewerbung aus der DB reißen. */
 export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number; samples: string[] } {
   if (!keywords.length) return { deleted: 0, samples: [] };
   // Lazy import um Reihenfolge-Probleme bei Modul-Loading zu vermeiden.
@@ -465,10 +478,13 @@ export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number
   const needles = keywords.map(normalizeForMatch);
 
   const db = getDb();
-  const all = db.prepare('SELECT id, title FROM jobs').all() as { id: number; title: string }[];
+  const all = db.prepare('SELECT id, title, status, rating FROM jobs').all() as
+    { id: number; title: string; status: string | null; rating: string | null }[];
   const toDelete: number[] = [];
   const samples: string[] = [];
   for (const row of all) {
+    if (row.status && row.status !== 'abgelehnt') continue;
+    if (row.rating) continue;
     const hay = normalizeForMatch(row.title ?? '');
     if (needles.some(n => matchNeedle(hay, n))) {
       toDelete.push(row.id);
