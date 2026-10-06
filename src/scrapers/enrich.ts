@@ -86,7 +86,16 @@ async function fetchCandidates(job: EnrichTarget): Promise<Candidate[]> {
     return cands;
   }
 
-  const html = await fetchText(job.url);
+  // Rohde & Schwarz: unsere URL ist die Ergebnisliste mit Sprungmarke #job-<id>.
+  const rs = job.url.match(/^([^#]*karriere-stellenangebote_251573\.html[^#]*)#job-([\w-]+)$/);
+  if (rs) return rohdeCandidates(rs[1], rs[2]);
+
+  return candidatesFromPage(await fetchText(job.url));
+}
+
+/** JSON-LD + typische Beschreibungs-Container einer Stellenseite. */
+function candidatesFromPage(html: string): Candidate[] {
+  const cands: Candidate[] = [];
   const $ = cheerio.load(html);
   for (const d of jsonLdDescriptions($)) cands.push({ source: 'json-ld', content: d });
 
@@ -106,6 +115,45 @@ async function fetchCandidates(job: EnrichTarget): Promise<Candidate[]> {
     cands.push({ source: sel, content: $.html(best) });
   }
   return cands;
+}
+
+/** Listenseiten werden pro Lauf nur einmal geladen, auch wenn mehrere Stellen darauf stehen. */
+let pageCache = new Map<string, Promise<string>>();
+function fetchCached(url: string): Promise<string> {
+  if (!pageCache.has(url)) pageCache.set(url, fetchText(url));
+  return pageCache.get(url)!;
+}
+
+/** Rohde & Schwarz: Stelle als Accordion-Eintrag in der (per &offset= nachgeladenen)
+ *  Liste suchen. Kandidaten: verlinkte Detailseiten des Eintrags, sonst dessen
+ *  aufgeklappter Text. */
+async function rohdeCandidates(listingUrl: string, jobId: string): Promise<Candidate[]> {
+  for (let offset = 0; offset <= 600; offset += 30) {
+    const html = await fetchCached(offset ? `${listingUrl}&offset=${offset}` : listingUrl);
+    const $ = cheerio.load(html);
+    const marker = $(`[data-job-id="${jobId}"]`).first();
+    if (!marker.length) {
+      const anyJobs = $('[data-job-id]').length > 0;
+      if (!anyJobs) break; // Ende der Liste
+      continue;
+    }
+    const item = marker.closest('div.module-accordion');
+    const cands: Candidate[] = [];
+    const links = new Set<string>();
+    item.find('a[href]').each((_, a) => {
+      const href = $(a).attr('href') ?? '';
+      if (!href || /^(#|javascript:|mailto:)/i.test(href) || href.includes('karriere-stellenangebote_251573')) return;
+      links.add(new URL(href, listingUrl).toString());
+    });
+    for (const link of links) {
+      try {
+        cands.push(...candidatesFromPage(await fetchText(link)));
+      } catch { /* Link tot – Accordion-Text bleibt als Fallback */ }
+    }
+    if (item.length) cands.push({ source: 'rs-accordion', content: $.html(item) });
+    return cands;
+  }
+  throw new Error(`Stelle job-${jobId} nicht mehr in der R&S-Liste`);
 }
 
 function score(s: ExtractedSections): number {
@@ -175,6 +223,7 @@ export interface EnrichOptions {
 
 export async function enrichJobs(opts: EnrichOptions = {}) {
   const log = opts.log ?? console.log;
+  pageCache = new Map();
   const jobs = getJobsToEnrich({ only: opts.only, force: opts.force, limit: opts.limit });
   if (!jobs.length) {
     const givenUp = opts.force ? 0 : countEnrichGivenUp();

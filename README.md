@@ -49,9 +49,14 @@ viele Stellen vollständig/teilweise/gar nicht extrahiert wurden.
 ```bash
 npm run enrich                       # nur fehlende Stellen
 npm run enrich -- --only Hensoldt    # nur eine Firma
-npm run enrich -- --force            # alle neu (z.B. nach Verbesserung der Extraktion)
+npm run enrich -- --force            # alle Seiten neu laden
+npm run enrich -- --report           # Diagnose: unvollständige Stellen + erkannte Überschriften
+npm run enrich -- --reextract        # gespeicherte Beschreibungen mit neuen Regeln neu zerlegen (offline)
 npm run clear-enrichment             # alle extrahierten Inhalte löschen
 ```
+
+Ablauf bei „teilweise“: `--report` zeigt unbekannte Überschriften als `[?]` →
+Muster in `extract.ts` ergänzen → `--reextract` (lädt nichts nach).
 
 Neue Überschriften-Varianten einer Firma (z.B. „Your boarding pass“ bei Airbus)
 werden in `src/scrapers/extract.ts` in `TASK_PATTERNS` / `QUAL_PATTERNS` /

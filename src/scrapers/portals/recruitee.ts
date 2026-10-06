@@ -31,6 +31,20 @@ interface RecruiteeOffer {
   careers_apply_url?: string;
   tags?: string[];
   employment_type_code?: string;
+  /** HTML: Stellenbeschreibung (meist inkl. Aufgaben). */
+  description?: string;
+  /** HTML: Anforderungen/Profil. */
+  requirements?: string;
+}
+
+/** Beschreibung + Anforderungen aus der API. Die Anforderungen bekommen eine
+ *  eigene Überschrift, damit die Extraktion sie sicher als Profil erkennt –
+ *  so muss die Detailseite gar nicht erst geladen werden. */
+function offerDescription(o: RecruiteeOffer): string | null {
+  const parts: string[] = [];
+  if (o.description?.trim()) parts.push(`<div>${o.description}</div>`);
+  if (o.requirements?.trim()) parts.push(`<h3>Anforderungen</h3><div>${o.requirements}</div>`);
+  return parts.length ? parts.join('\n') : null;
 }
 
 export async function scrapeRecruitee(cfg: RecruiteeConfig): Promise<JobInput[]> {
@@ -74,6 +88,7 @@ export async function scrapeRecruitee(cfg: RecruiteeConfig): Promise<JobInput[]>
           location,
           url: detailUrl,
           source_portal: cfg.sourcePortal ?? 'recruitee',
+          description_raw: offerDescription(o),
         };
         job.hash = hashJob(job);
         out.push(job);

@@ -228,6 +228,33 @@ async function scrapeSiemens(): Promise<JobInput[]> {
   return out.filter(j => isMunichArea(j.location));
 }
 
+/** Sammelt Beschreibungs-Texte aus einem KNDS-API-Eintrag (Feldnamen unbekannt,
+ *  daher über den Schlüsselnamen erkannt, bis 2 Ebenen tief). Felder, die nach
+ *  Aufgaben/Profil/Benefits klingen, bekommen eine passende Überschrift, damit
+ *  die Extraktion sie zuordnen kann. Die verlinkte SAP-Bewerbungsseite lädt den
+ *  Text erst per JavaScript – ohne diese Felder gäbe es keine Beschreibung. */
+function kndsDescription(item: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  const visit = (obj: Record<string, unknown>, depth: number) => {
+    for (const [key, val] of Object.entries(obj)) {
+      if (val && typeof val === 'object' && !Array.isArray(val) && depth < 2) {
+        visit(val as Record<string, unknown>, depth + 1);
+        continue;
+      }
+      if (typeof val !== 'string' || val.trim().length < 80) continue;
+      if (/url|link|href|image|logo/i.test(key)) continue;
+      if (!/desc|content|text|body|task|aufgabe|respons|requirement|profil|qualif|skill|benefit|offer|angebot|intro/i.test(key)) continue;
+      let heading = '';
+      if (/task|aufgabe|respons/i.test(key)) heading = 'Ihre Aufgaben';
+      else if (/requirement|profil|qualif|skill/i.test(key)) heading = 'Ihr Profil';
+      else if (/benefit|offer|angebot/i.test(key)) heading = 'Wir bieten';
+      parts.push((heading ? `<h3>${heading}</h3>` : '') + `<div>${val}</div>`);
+    }
+  };
+  visit(item, 0);
+  return parts.length ? parts.join('\n') : null;
+}
+
 async function scrapeKNDS(): Promise<JobInput[]> {
   // KNDS' Portal jobs.knds.de ist eine SPA auf recruiting-solutions.org
   // (Azure Cognitive Search Backend). Public-Key-Auth: der x-api-key ist
@@ -266,6 +293,7 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 
   const out: JobInput[] = [];
   const seen = new Set<string>();
+  const withoutDescription: Record<string, unknown>[] = [];
   let munichMatches = 0;
 
   for (const it of items) {
@@ -293,15 +321,25 @@ async function scrapeKNDS(): Promise<JobInput[]> {
     seen.add(url);
 
     const munichLoc = locArr.find(l => /münchen|munich/i.test(l)) ?? 'München';
+    const description = kndsDescription(it);
+    if (!description) withoutDescription.push(it);
     const job: JobInput = {
       company: 'KNDS',
       title,
       location: munichLoc,
       url,
       source_portal: 'knds-rs',
+      description_raw: description,
     };
     job.hash = hashJob(job);
     out.push(job);
+  }
+
+  if (withoutDescription.length) {
+    // Hilft beim Nachjustieren von kndsDescription(), falls die API andere Feldnamen nutzt.
+    const sample = withoutDescription[0];
+    const fields = Object.entries(sample).map(([k, v]) => `${k}(${typeof v === 'string' ? v.length + ' Zeichen' : Array.isArray(v) ? 'Liste' : typeof v})`);
+    console.log(`  [debug KNDS] ${withoutDescription.length} Stellen ohne Beschreibungsfeld. Felder der ersten: ${fields.join(', ')}`);
   }
 
   if (out.length === 0) {

@@ -583,3 +583,28 @@ export function markEnrichFailed(id: number, description_raw: string | null): vo
     WHERE id = @id
   `).run({ id, description_raw });
 }
+
+/** Für die Diagnose: sichtbare Stellen, bei denen Aufgaben ODER Profil fehlt,
+ *  obwohl schon ein Anreicherungs-Versuch lief. */
+export function getIncompleteEnrichments(): (EnrichTarget & { tasks: string | null; qualifications: string | null })[] {
+  return getDb().prepare(`
+    SELECT id, company, title, url, source_portal, description_raw, tasks, qualifications
+    FROM jobs
+    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only'
+      AND enrich_attempts > 0 AND (tasks IS NULL OR qualifications IS NULL)
+    ORDER BY company, title
+  `).all() as (EnrichTarget & { tasks: string | null; qualifications: string | null })[];
+}
+
+/** Für --reextract: sichtbare Stellen mit gespeicherter Beschreibung. */
+export function getStoredDescriptions(): { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[] {
+  return getDb().prepare(`
+    SELECT id, company, description_raw, tasks, qualifications FROM jobs
+    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only' AND description_raw IS NOT NULL
+  `).all() as { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[];
+}
+
+export function updateSections(id: number, tasks: string | null, qualifications: string | null): void {
+  getDb().prepare('UPDATE jobs SET tasks = ?, qualifications = ?, enriched_at = ? WHERE id = ?')
+    .run(tasks, qualifications, new Date().toISOString(), id);
+}

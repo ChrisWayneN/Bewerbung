@@ -124,7 +124,26 @@ function classifyHeading(text: string, strong: boolean): Kind | null {
 
 const MAX_SECTION_CHARS = 8000;
 
+/** Formatierung einer Überschriften-artigen Zeile. */
+function headingStyle(l: Line): 'h' | 'b' | 'colon' | null {
+  if (l.hTag) return 'h';
+  if (l.strong) return 'b';
+  if (/[:：]\s*$/.test(l.text)) return 'colon';
+  return null;
+}
+
 function sectionsFromLines(lines: Line[]): ExtractedSections {
+  // Wie sehen die erkannten Überschriften in DIESER Anzeige aus (h3? fetter
+  // Absatz?). Eine unbekannte Zeile im selben Stil ist sehr wahrscheinlich
+  // ebenfalls eine Abschnitts-Überschrift (nur anders formuliert) und beendet
+  // den Abschnitt – sonst landet z.B. ein unbekannt betiteltes Profil in den
+  // Aufgaben. Lieber fehlt etwas sichtbar, als dass es falsch zugeordnet wird.
+  const knownStyles = new Set<string>();
+  for (const l of lines) {
+    const style = headingStyle(l);
+    if (style && !l.li && l.text.length <= 90 && classifyHeading(l.text, true)) knownStyles.add(style);
+  }
+
   let mode: 'task' | 'qual' | null = null;
   const out = { task: [] as string[], qual: [] as string[] };
   const seen = { task: new Set<string>(), qual: new Set<string>() };
@@ -153,9 +172,11 @@ function sectionsFromLines(lines: Line[]): ExtractedSections {
         if (out[kind].length > 0) out[kind].push('', t.replace(/[:：]\s*$/, '') + ':');
         continue;
       }
-      // Unbekannte echte Überschrift beendet den Abschnitt; fette Zwischenzeilen
-      // ohne Treffer (z.B. Unterpunkte) gehören dagegen zum Inhalt.
-      if (!kind && l.hTag) { mode = null; continue; }
+      // Unbekannte Überschrift im Stil der bekannten (oder echte <h1-6>) beendet
+      // den Abschnitt; anders formatierte Zwischenzeilen (z.B. fette Unterpunkte
+      // unter <h3>-Abschnitten) gehören dagegen zum Inhalt.
+      const style = headingStyle(l);
+      if (!kind && (l.hTag || (style && knownStyles.has(style)))) { mode = null; continue; }
     }
     if (!mode || t.length > 700) continue;
     const entry = l.li ? '• ' + t : t;
@@ -282,9 +303,26 @@ export function extractSectionsFromText(text: string): ExtractedSections {
   return sectionsFromLines(textToLines(text));
 }
 
+function isHtml(input: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(input);
+}
+
 /** HTML oder Text – je nachdem, ob Tags enthalten sind. */
 export function extractSections(input: string): ExtractedSections {
-  return /<[a-z][\s\S]*>/i.test(input) ? extractSectionsFromHtml(input) : extractSectionsFromText(input);
+  return isHtml(input) ? extractSectionsFromHtml(input) : extractSectionsFromText(input);
+}
+
+/** Diagnose: alle Überschriften-artigen Zeilen einer Beschreibung samt Zuordnung
+ *  (null = unbekannt). Zeigt, welche Firmen-Formulierung in den Mustern fehlt. */
+export function explainHeadings(input: string): { text: string; kind: Kind | null }[] {
+  const lines = isHtml(input) ? htmlToLines(input) : textToLines(input);
+  const out: { text: string; kind: Kind | null }[] = [];
+  for (const l of lines) {
+    const strongHeading = l.hTag || l.strong || /[:：]\s*$/.test(l.text);
+    if (l.li || l.text.length > 90 || !strongHeading) continue;
+    out.push({ text: l.text, kind: classifyHeading(l.text, strongHeading) });
+  }
+  return out;
 }
 
 /** Entfernt aktive Inhalte (Skripte, Event-Handler, Formulare) aus fremdem HTML,
