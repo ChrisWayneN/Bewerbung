@@ -18,8 +18,10 @@ const before = db
   )
   .get() as { d: number; t: number; q: number };
 
+// Versuchszähler mit zurücksetzen, damit "npm run enrich" danach wieder alle Stellen lädt.
 const res = db
-  .prepare(`UPDATE jobs SET description_raw = NULL, tasks = NULL, qualifications = NULL`)
+  .prepare(`UPDATE jobs SET description_raw = NULL, tasks = NULL, qualifications = NULL,
+            enriched_at = NULL, enrich_attempts = 0`)
   .run();
 
 console.log(`Vorher belegt: description_raw=${before.d}, tasks=${before.t}, qualifications=${before.q}`);

@@ -10,6 +10,7 @@
     "scrape": "tsx scripts/scrape.ts",
     "scrape:one": "tsx scripts/scrape.ts --only",
     "cleanup": "tsx scripts/cleanup-blacklist.ts",
+    "enrich": "tsx scripts/enrich.ts",
     "clear-enrichment": "tsx scripts/clear-enrichment.ts",
     "reset-rejected": "tsx scripts/reset-rejected.ts",
     "inspect-neura": "tsx scripts/inspect-neura.ts",

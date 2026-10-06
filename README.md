@@ -34,8 +34,28 @@ npm run scrape                       # alle 14 Firmen
 npm run scrape -- --only Airbus      # nur Airbus
 npm run scrape -- --only Hensoldt,Airbus,IABG
 npm run scrape -- --concurrency 2    # langsam-und-sicher
+npm run scrape -- --no-enrich        # ohne Laden von Aufgaben/Profil (schneller)
 npm run reset                        # entfernt Einträge alter Firmen aus der DB
 ```
+
+## Aufgaben & Profil (Detail-Anreicherung)
+
+Am Ende von `npm run scrape` wird für jede Stelle, bei der Aufgaben/Profil noch
+fehlen, die Stellenseite geöffnet und beides extrahiert (Quelle: JSON-LD-JobPosting,
+sonst typische Beschreibungs-Container). Jede Stelle wird nur einmal erfolgreich
+geladen; Fehlschläge werden max. 3× wiederholt. Die Ausgabe zeigt pro Firma, wie
+viele Stellen vollständig/teilweise/gar nicht extrahiert wurden.
+
+```bash
+npm run enrich                       # nur fehlende Stellen
+npm run enrich -- --only Hensoldt    # nur eine Firma
+npm run enrich -- --force            # alle neu (z.B. nach Verbesserung der Extraktion)
+npm run clear-enrichment             # alle extrahierten Inhalte löschen
+```
+
+Neue Überschriften-Varianten einer Firma (z.B. „Your boarding pass“ bei Airbus)
+werden in `src/scrapers/extract.ts` in `TASK_PATTERNS` / `QUAL_PATTERNS` /
+`STOP_PATTERNS` ergänzt.
 
 ## Aktualisierungs-Workflow nach Code-Update
 
@@ -76,6 +96,7 @@ src/
 └── scrapers/
     ├── base.ts                      # München-Whitelist, fetch helpers, hashJob
     ├── extract.ts                   # Aufgaben/Qualifikation aus HTML/Text
+    ├── enrich.ts                    # Detail-Anreicherung: Stellenseiten laden + extrahieren
     ├── companies.ts                 # 21 Module + Registry
     ├── runAll.ts                    # Orchestrator
     └── portals/

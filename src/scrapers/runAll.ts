@@ -1,11 +1,14 @@
 import { scrapers } from './companies';
 import { upsertJobs, recordImportRun, recordScraperStatus, deleteJobsByTitleKeywords, deleteStaleJobsForCompany } from '../lib/db';
 import { getBlacklistKeywords, matchedBlacklistTerm } from '../lib/blacklist';
+import { enrichJobs } from './enrich';
 
 export interface RunOptions {
   only?: string[];        // company-name filter
   concurrency?: number;
   log?: (msg: string) => void;
+  /** Nach dem Scrapen Aufgaben/Profil von den Stellenseiten laden (Standard: an). */
+  enrich?: boolean;
 }
 
 export async function runAllScrapers(opts: RunOptions = {}) {
@@ -78,6 +81,13 @@ export async function runAllScrapers(opts: RunOptions = {}) {
     cleanup.samples.forEach(t => log(`    · ${t}`));
   }
   if (keywords.length === 0) log(`  ⚠️  Blacklist leer (src/config/blacklist.json).`);
+
+  // Detail-Anreicherung: nur Stellen, bei denen Aufgaben/Profil noch fehlen –
+  // nach dem ersten Lauf also praktisch nur die neuen.
+  if (opts.enrich !== false) {
+    log('');
+    await enrichJobs({ only: opts.only, log });
+  }
 
   return { totalJobs, totalNew, totalBlacklisted, blacklistDeleted: cleanup.deleted, summary };
 }

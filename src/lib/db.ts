@@ -27,6 +27,14 @@ export function getDb(): Database.Database {
   if (!cols.some(c => c.name === 'status')) {
     db.exec("ALTER TABLE jobs ADD COLUMN status TEXT");
   }
+  // Detail-Anreicherung (Aufgaben/Profil von der Stellenseite): wann zuletzt
+  // erfolgreich, und wie oft schon versucht (begrenzt Wiederholungen).
+  if (!cols.some(c => c.name === 'enriched_at')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN enriched_at TEXT");
+  }
+  if (!cols.some(c => c.name === 'enrich_attempts')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN enrich_attempts INTEGER NOT NULL DEFAULT 0");
+  }
   // Backfill: bestehende hidden=1-Jobs in hidden_urls übernehmen, falls
   // die Tabelle leer ist (z.B. nach Schema-Migration). Idempotent durch
   // INSERT OR IGNORE.
@@ -75,6 +83,8 @@ export interface JobRow {
   hash: string | null;
   rating: string | null;
   status: string | null;
+  enriched_at: string | null;
+  enrich_attempts: number;
 }
 
 export type JobRating = 'A' | 'AB' | 'B';
@@ -111,9 +121,14 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
     VALUES (@company, @title, @location, @url, @source_portal, @description_raw,
       @tasks, @qualifications, @first_seen, @last_seen, @hidden, @hash, @rating, @status)
   `);
+  // COALESCE: Listen-Scraper liefern meist keine Beschreibung. Ohne COALESCE
+  // würde jeder Scrape die per Detail-Anreicherung geholten Aufgaben/Profile
+  // wieder mit NULL überschreiben.
   const update = db.prepare(`
     UPDATE jobs SET title=@title, location=@location, source_portal=@source_portal,
-      description_raw=@description_raw, tasks=@tasks, qualifications=@qualifications,
+      description_raw=COALESCE(@description_raw, description_raw),
+      tasks=COALESCE(@tasks, tasks),
+      qualifications=COALESCE(@qualifications, qualifications),
       last_seen=@last_seen, hash=@hash
     WHERE id=@id
   `);
@@ -498,4 +513,73 @@ export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number
   });
   tx(toDelete);
   return { deleted: toDelete.length, samples };
+}
+
+/* ---------------- Detail-Anreicherung (Aufgaben / Profil) ---------------- */
+
+/** Maximale Fehlversuche pro Stelle, danach wird sie bei normalen Läufen
+ *  nicht mehr angefasst (z.B. Seite offline oder nur per JavaScript lesbar). */
+export const MAX_ENRICH_ATTEMPTS = 3;
+
+export interface EnrichTarget {
+  id: number;
+  company: string;
+  title: string;
+  url: string;
+  source_portal: string | null;
+  description_raw: string | null;
+}
+
+/** Stellen, deren Aufgaben/Profil noch fehlen. Ausgeblendete/abgelehnte und
+ *  reine Karriereseiten-Platzhalter (link-only) werden übersprungen.
+ *  force=true: alle sichtbaren Stellen, auch bereits angereicherte. */
+export function getJobsToEnrich(opts: { only?: string[]; force?: boolean; limit?: number } = {}): EnrichTarget[] {
+  const db = getDb();
+  const where = ["hidden = 0", "COALESCE(source_portal, '') != 'link-only'"];
+  if (!opts.force) {
+    where.push('tasks IS NULL AND qualifications IS NULL');
+    where.push(`enrich_attempts < ${MAX_ENRICH_ATTEMPTS}`);
+  }
+  let rows = db.prepare(`
+    SELECT id, company, title, url, source_portal, description_raw
+    FROM jobs WHERE ${where.join(' AND ')}
+    ORDER BY first_seen DESC, id DESC
+  `).all() as EnrichTarget[];
+  if (opts.only?.length) {
+    const needles = opts.only.map(n => n.toLowerCase());
+    rows = rows.filter(r => needles.some(n => r.company.toLowerCase().includes(n)));
+  }
+  return opts.limit ? rows.slice(0, opts.limit) : rows;
+}
+
+/** Sichtbare Stellen ohne Aufgaben/Profil, die nach MAX_ENRICH_ATTEMPTS aufgegeben wurden. */
+export function countEnrichGivenUp(): number {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) AS c FROM jobs
+    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only'
+      AND tasks IS NULL AND qualifications IS NULL AND enrich_attempts >= ${MAX_ENRICH_ATTEMPTS}
+  `).get() as { c: number };
+  return row.c;
+}
+
+/** Speichert ein erfolgreiches Ergebnis (mind. Aufgaben ODER Profil gefunden). */
+export function saveEnrichment(id: number, data: { description_raw: string | null; tasks: string | null; qualifications: string | null }): void {
+  getDb().prepare(`
+    UPDATE jobs SET
+      description_raw = COALESCE(@description_raw, description_raw),
+      tasks = @tasks, qualifications = @qualifications,
+      enriched_at = @now, enrich_attempts = enrich_attempts + 1
+    WHERE id = @id
+  `).run({ ...data, id, now: new Date().toISOString() });
+}
+
+/** Fehlversuch zählen. Eine gefundene Roh-Beschreibung wird trotzdem gespeichert,
+ *  damit sie auf der Detailseite unter "Roh-Beschreibung" lesbar ist. */
+export function markEnrichFailed(id: number, description_raw: string | null): void {
+  getDb().prepare(`
+    UPDATE jobs SET
+      description_raw = COALESCE(description_raw, @description_raw),
+      enrich_attempts = enrich_attempts + 1
+    WHERE id = @id
+  `).run({ id, description_raw });
 }

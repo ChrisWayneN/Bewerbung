@@ -65,7 +65,7 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
       </section>
 
       {job.description_raw && (
-        <details className="text-sm">
+        <details className="text-sm" open={!job.tasks && !job.qualifications}>
           <summary className="cursor-pointer text-neutral-500">Roh-Beschreibung anzeigen</summary>
           <div className="mt-2 prose prose-sm dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: job.description_raw }} />
         </details>

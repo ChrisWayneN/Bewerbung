@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   hidden INTEGER NOT NULL DEFAULT 0,
   hash TEXT,
   rating TEXT,         -- 'A' | 'AB' | 'B' | NULL
-  status TEXT          -- 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt' | NULL
+  status TEXT,         -- 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt' | NULL
+  enriched_at TEXT,    -- Zeitpunkt der letzten erfolgreichen Detail-Anreicherung
+  enrich_attempts INTEGER NOT NULL DEFAULT 0  -- Versuche, Aufgaben/Profil zu laden
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
