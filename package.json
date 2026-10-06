@@ -11,6 +11,7 @@
     "scrape:one": "tsx scripts/scrape.ts --only",
     "cleanup": "tsx scripts/cleanup-blacklist.ts",
     "enrich": "tsx scripts/enrich.ts",
+    "translate:export": "tsx scripts/translate-export.ts",
     "clear-enrichment": "tsx scripts/clear-enrichment.ts",
     "reset-rejected": "tsx scripts/reset-rejected.ts",
     "inspect-neura": "tsx scripts/inspect-neura.ts",

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getJob } from '@/lib/db';
+import { translationFor } from '@/lib/translations';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,34 @@ function NotExtracted({ note, closed }: { note: string | null; closed: boolean }
         ? '— nicht verfügbar, die Stelle ist nicht mehr ausgeschrieben —'
         : `— nicht automatisch extrahiert${note ? ` (${note})` : ''} — bitte Original-Anzeige öffnen.`}
     </p>
+  );
+}
+
+const PRE = 'whitespace-pre-wrap text-sm leading-relaxed bg-neutral-100 dark:bg-neutral-900 rounded p-4 border border-neutral-200 dark:border-neutral-800';
+
+/** Abschnitt mit deutscher Übersetzung (falls vorhanden) und aufklappbarem Original. */
+function Section({ title, text, note, closed }: { title: string; text: string | null; note: string | null; closed: boolean }) {
+  const german = translationFor(text);
+  return (
+    <section>
+      <h2 className="text-sm uppercase tracking-wider text-neutral-500 mb-2">
+        {title}
+        {german && <span className="ml-2 normal-case tracking-normal text-xs text-neutral-400">· übersetzt aus dem Englischen</span>}
+      </h2>
+      {!text ? (
+        <NotExtracted note={note} closed={closed} />
+      ) : german ? (
+        <>
+          <pre className={PRE}>{german}</pre>
+          <details className="mt-2 text-sm">
+            <summary className="cursor-pointer text-neutral-500">Original (Englisch) anzeigen</summary>
+            <pre className={PRE + ' mt-2'}>{text}</pre>
+          </details>
+        </>
+      ) : (
+        <pre className={PRE}>{text}</pre>
+      )}
+    </section>
   );
 }
 
@@ -61,27 +90,8 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
         </div>
       </header>
 
-      <section>
-        <h2 className="text-sm uppercase tracking-wider text-neutral-500 mb-2">Aufgaben / Tätigkeiten</h2>
-        {job.tasks ? (
-          <pre className="whitespace-pre-wrap text-sm leading-relaxed bg-neutral-100 dark:bg-neutral-900 rounded p-4 border border-neutral-200 dark:border-neutral-800">
-            {job.tasks}
-          </pre>
-        ) : (
-          <NotExtracted note={job.enrich_note} closed={job.is_closed} />
-        )}
-      </section>
-
-      <section>
-        <h2 className="text-sm uppercase tracking-wider text-neutral-500 mb-2">Qualifikationen / Profil</h2>
-        {job.qualifications ? (
-          <pre className="whitespace-pre-wrap text-sm leading-relaxed bg-neutral-100 dark:bg-neutral-900 rounded p-4 border border-neutral-200 dark:border-neutral-800">
-            {job.qualifications}
-          </pre>
-        ) : (
-          <NotExtracted note={job.enrich_note} closed={job.is_closed} />
-        )}
-      </section>
+      <Section title="Aufgaben / Tätigkeiten" text={job.tasks} note={job.enrich_note} closed={job.is_closed} />
+      <Section title="Qualifikationen / Profil" text={job.qualifications} note={job.enrich_note} closed={job.is_closed} />
 
       {job.description_raw && (
         <details className="text-sm" open={!job.tasks && !job.qualifications}>
