@@ -33,7 +33,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'KNDS',            careersUrl: 'https://jobs.knds.de/',                                portal: 'recruiting-solutions', status: '✅', note: 'recruiting-solutions.org (Azure Cog. Search) – POST production.api.recruiting-solutions.org/search mit customerId=knds-prod und Public x-api-key.' },
   { name: 'Rohde & Schwarz', careersUrl: 'https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html', portal: 'paulsjob-html',  status: '✅', note: 'paulsjob.ai-Backend, server-rendered. Pagination per &offset=N in 30er-Schritten (Lazy-Load).' },
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet) – Liste unter showJobOfferList.do, <tr class=joboffer>' },
-  { name: 'Agile Robots SE', careersUrl: 'https://agile-robots-se.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Slug: agile-robots-se' },
+  { name: 'Agile Robots SE', careersUrl: 'https://job-boards.eu.greenhouse.io/agilerobotsse/',   portal: 'greenhouse-html-eu', status: '✅', note: 'Seit 10/2026 Greenhouse-EU-Board (vorher Personio). Ganzes Board per ?page=N, München-Filter clientseitig über die Ortsangabe.' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE&optionsFacetsDD_customfield2=Engineering&optionsFacetsDD_customfield1=Professionals', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors, job-tile-DOM. Facetten: country=DE + Engineering (customfield2) + Professionals (customfield1); Standort clientseitig via isMunichArea (Fürstenfeldbruck/Taufkirchen/Ottobrunn). Filter anpassbar über customfield1/2.' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit echten Location-Facet-IDs (Country=Germany/812132, State=Bavaria/813141, City=München/912803) aus Browser-Netzwerk-Analyse, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
@@ -157,7 +157,9 @@ async function scrapeHensoldt(): Promise<JobInput[]> {
 }
 
 async function scrapeAgileRobots(): Promise<JobInput[]> {
-  return scrapePersonio({ company: 'Agile Robots SE', tenant: 'agile-robots-se', tld: 'de' });
+  // Agile Robots ist von Personio auf Greenhouse (EU-Job-Board) umgezogen.
+  // Office-ID für München unbekannt → ganzes Board holen, clientseitig filtern.
+  return scrapeGreenhouseEuBoard({ company: 'Agile Robots SE', board: 'agilerobotsse' });
 }
 
 async function scrapeFranka(): Promise<JobInput[]> {
@@ -741,27 +743,29 @@ async function scrapeHelsing(): Promise<JobInput[]> {
   return out;
 }
 
-async function scrapeIsarAerospace(): Promise<JobInput[]> {
-  // Isar nutzt Greenhouse's neues Job-Board-System (job-boards.eu.greenhouse.io,
-  // SSR-HTML, Pagination per ?page=N). Die klassische boards-api.greenhouse.io
-  // kennt das Board nicht (fetch failed). Daher HTML-Scrape — der ?offices[]=…
-  // Query wird serverseitig ausgewertet, wir bekommen nur München-Stellen.
-  //
-  // DOM-Struktur pro Job:
-  //   <tr class="job-post"><td class="cell">
-  //     <a href="…/isaraerospace/jobs/<id>" target="_top">
-  //       <p class="body body--medium">Title (m/f/d)</p>
-  //       <p class="body body__secondary body--metadata">Ottobrunn, Bavaria, Germany</p>
-  //     </a>
-  //   </td></tr>
-  const baseUrl = 'https://job-boards.eu.greenhouse.io/isaraerospace';
-  const officeQuery = 'offices%5B%5D=4008032101';
+/** Greenhouse's neues Job-Board-System (job-boards.eu.greenhouse.io): SSR-HTML,
+ *  Pagination per ?page=N. Die klassische boards-api.greenhouse.io kennt diese
+ *  EU-Boards nicht, daher HTML-Scrape.
+ *
+ *  DOM-Struktur pro Job:
+ *    <tr class="job-post"><td class="cell">
+ *      <a href="…/<board>/jobs/<id>" target="_top">
+ *        <p class="body body--medium">Title (m/f/d)</p>
+ *        <p class="body body__secondary body--metadata">Ottobrunn, Bavaria, Germany</p>
+ *      </a>
+ *    </td></tr>
+ *
+ *  query: optionaler Server-Filter (z.B. offices[]=…). Ohne query wird das
+ *  ganze Board geholt und clientseitig per isMunichArea() gefiltert. */
+async function scrapeGreenhouseEuBoard(cfg: { company: string; board: string; query?: string }): Promise<JobInput[]> {
+  const baseUrl = `https://job-boards.eu.greenhouse.io/${cfg.board}`;
   const out: JobInput[] = [];
   const seen = new Set<string>();
   let totalJobsHeader: number | null = null;
+  let rowsSeen = 0;
 
-  for (let page = 1; page <= 20; page++) {
-    const url = `${baseUrl}?${officeQuery}&page=${page}`;
+  for (let page = 1; page <= 30; page++) {
+    const url = `${baseUrl}?${cfg.query ? cfg.query + '&' : ''}page=${page}`;
     let html: string;
     try {
       html = await fetchText(url);
@@ -778,10 +782,9 @@ async function scrapeIsarAerospace(): Promise<JobInput[]> {
     const rows = $('tr.job-post');
     if (!rows.length) break;
 
-    let pageAdded = 0;
+    let pageNew = 0;
     rows.each((_, tr) => {
-      const $tr = $(tr);
-      const a = $tr.find('td.cell a').first();
+      const a = $(tr).find('td.cell a').first();
       const href = a.attr('href');
       if (!href) return;
       const title = a.find('p.body--medium').first().text().trim().replace(/\s+/g, ' ');
@@ -790,8 +793,11 @@ async function scrapeIsarAerospace(): Promise<JobInput[]> {
       const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
       if (seen.has(fullUrl)) return;
       seen.add(fullUrl);
+      pageNew++;
+      // Mit Server-Filter sind alle Treffer bereits München; ohne Filter hier aussieben.
+      if (!cfg.query && !isMunichArea(location)) return;
       const job: JobInput = {
-        company: 'Isar Aerospace',
+        company: cfg.company,
         title,
         location: location || 'München',
         url: fullUrl,
@@ -799,17 +805,24 @@ async function scrapeIsarAerospace(): Promise<JobInput[]> {
       };
       job.hash = hashJob(job);
       out.push(job);
-      pageAdded++;
     });
 
-    if (pageAdded === 0) break;
-    if (totalJobsHeader !== null && out.length >= totalJobsHeader) break;
+    // Abbruch über ALLE gesehenen Zeilen, nicht über München-Treffer – sonst
+    // würde eine Seite ohne München-Stelle das Blättern zu früh beenden.
+    rowsSeen += pageNew;
+    if (pageNew === 0) break;
+    if (totalJobsHeader !== null && rowsSeen >= totalJobsHeader) break;
   }
 
   if (out.length === 0) {
-    console.log(`  [debug Isar Aerospace] 0 Treffer auf HTML-Listing (Header sagte ${totalJobsHeader ?? '?'} Jobs).`);
+    console.log(`  [debug ${cfg.company}] 0 Treffer auf Greenhouse-EU-Board (Header sagte ${totalJobsHeader ?? '?'} Jobs, ${rowsSeen} Zeilen gesehen).`);
   }
   return out;
+}
+
+async function scrapeIsarAerospace(): Promise<JobInput[]> {
+  // ?offices[]=4008032101 wird serverseitig ausgewertet → nur München-Stellen.
+  return scrapeGreenhouseEuBoard({ company: 'Isar Aerospace', board: 'isaraerospace', query: 'offices%5B%5D=4008032101' });
 }
 
 /* ---------------- Public registry ---------------- */
