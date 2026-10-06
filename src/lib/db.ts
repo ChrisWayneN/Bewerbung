@@ -211,12 +211,17 @@ export function getPreviousImportTimestamp(): string {
   return row?.run_at ?? '1970-01-01T00:00:00.000Z';
 }
 
+/** Filter "Nur Neue": seit dem letzten Import dazugekommen ODER noch auf
+ *  Status 1 ("Neu" = kein Status gesetzt), auch wenn schon länger in der DB. */
+const ONLY_NEW_SQL = '(j.first_seen > @baseline OR j.status IS NULL)';
+
 export type JobSort = 'rating-desc' | 'rating-asc' | 'status-asc' | 'status-desc';
 
 export interface ListFilters {
   q?: string;
   /** Einzel-Firmenname ODER "kat:<Kategoriename>" für eine Gruppe. */
   company?: string;
+  /** "Nur Neue": seit dem letzten Import dazugekommen ODER noch auf Status 1 (kein Status). */
   onlyNew?: boolean;
   /** Zeigt hidden=1-Stellen, die NICHT abgelehnt sind (manuell ausgeblendet). */
   includeHidden?: boolean;
@@ -268,7 +273,7 @@ export function listJobs(filters: ListFilters = {}): JobView[] {
       params.company = filters.company;
     }
   }
-  if (filters.onlyNew) where.push('j.first_seen > @baseline');
+  if (filters.onlyNew) where.push(ONLY_NEW_SQL);
   if (filters.onlyA) where.push("j.rating = 'A'");
   if (filters.onlyApplied && filters.onlyInProcess) {
     where.push("j.status IN ('beworben', 'prozess')");
@@ -323,10 +328,11 @@ function buildOrderBy(sort: JobSort | undefined): string {
     return "ORDER BY CASE j.rating WHEN 'B' THEN 1 WHEN 'AB' THEN 2 WHEN 'A' THEN 3 ELSE 9 END ASC, j.first_seen DESC, j.id DESC";
   }
   // Status-Reihenfolge (1→5): Neu, Gelesen, Beworben, Prozess, Abgelehnt.
-  // "Neu" = first_seen > Baseline UND status IS NULL.
+  // "Neu" = Status 1 = kein Status gesetzt – wie im Status-Dropdown, unabhängig
+  // davon, wann die Stelle importiert wurde. Innerhalb eines Status: neueste zuerst.
   if (sort === 'status-asc') {
     return `ORDER BY CASE
-      WHEN j.status IS NULL AND j.first_seen > @baseline THEN 1
+      WHEN j.status IS NULL THEN 1
       WHEN j.status = 'gelesen' THEN 2
       WHEN j.status = 'beworben' THEN 3
       WHEN j.status = 'prozess' THEN 4
@@ -339,7 +345,7 @@ function buildOrderBy(sort: JobSort | undefined): string {
       WHEN j.status = 'prozess' THEN 2
       WHEN j.status = 'beworben' THEN 3
       WHEN j.status = 'gelesen' THEN 4
-      WHEN j.status IS NULL AND j.first_seen > @baseline THEN 5
+      WHEN j.status IS NULL THEN 5
       ELSE 9 END ASC, j.first_seen DESC, j.id DESC`;
   }
   return 'ORDER BY j.first_seen DESC, j.id DESC';
@@ -424,7 +430,7 @@ export function listCompanies(): string[] {
 }
 
 /** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
- *  onlyNew (seit letztem Import) und includeHidden. Wird im Firmen-
+ *  onlyNew (siehe ONLY_NEW_SQL) und includeHidden. Wird im Firmen-
  *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
 export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; includeRejected?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
   const db = getDb();
@@ -437,7 +443,7 @@ export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: b
     if (filters.includeHidden)   vis.push("(j.hidden = 1 AND (j.status IS NULL OR j.status != 'abgelehnt'))");
     where.push('(' + vis.join(' OR ') + ')');
   }
-  if (filters.onlyNew) where.push('j.first_seen > @baseline');
+  if (filters.onlyNew) where.push(ONLY_NEW_SQL);
   if (filters.onlyA) where.push("j.rating = 'A'");
   if (filters.onlyApplied && filters.onlyInProcess) {
     where.push("j.status IN ('beworben', 'prozess')");
