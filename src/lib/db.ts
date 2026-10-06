@@ -231,7 +231,10 @@ export interface ListFilters {
   sort?: JobSort;
 }
 
-export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean })[] {
+/** Zeile für Liste/Detailseite: is_new = seit letztem Import, is_closed = nicht mehr ausgeschrieben. */
+export type JobView = JobRow & { is_new: boolean; is_closed: boolean };
+
+export function listJobs(filters: ListFilters = {}): JobView[] {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const params: Record<string, unknown> = { baseline };
@@ -284,7 +287,7 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
     if (cleaned) {
       params.q = cleaned.split(/\s+/).map(t => t + '*').join(' ');
       sql = `
-        SELECT j.*, (j.first_seen > @baseline) AS is_new
+        SELECT j.*, (j.first_seen > @baseline) AS is_new, ${closedExpr('j')} AS is_closed
         FROM jobs j
         JOIN jobs_fts f ON f.rowid = j.id
         WHERE jobs_fts MATCH @q ${where.length ? 'AND ' + where.join(' AND ') : ''}
@@ -297,13 +300,13 @@ export function listJobs(filters: ListFilters = {}): (JobRow & { is_new: boolean
   } else {
     sql = baseSelect(where, orderBy);
   }
-  const rows = db.prepare(sql).all(params) as (JobRow & { is_new: number })[];
-  return rows.map(r => ({ ...r, is_new: !!r.is_new }));
+  const rows = db.prepare(sql).all(params) as (JobRow & { is_new: number; is_closed: number })[];
+  return rows.map(r => ({ ...r, is_new: !!r.is_new, is_closed: !!r.is_closed }));
 }
 
 function baseSelect(where: string[], orderBy: string): string {
   return `
-    SELECT j.*, (j.first_seen > @baseline) AS is_new
+    SELECT j.*, (j.first_seen > @baseline) AS is_new, ${closedExpr('j')} AS is_closed
     FROM jobs j
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ${orderBy}
@@ -342,13 +345,13 @@ function buildOrderBy(sort: JobSort | undefined): string {
   return 'ORDER BY j.first_seen DESC, j.id DESC';
 }
 
-export function getJob(id: number): (JobRow & { is_new: boolean }) | null {
+export function getJob(id: number): JobView | null {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const row = db
-    .prepare('SELECT j.*, (j.first_seen > ?) AS is_new FROM jobs j WHERE id = ?')
-    .get(baseline, id) as (JobRow & { is_new: number }) | undefined;
-  return row ? { ...row, is_new: !!row.is_new } : null;
+    .prepare(`SELECT j.*, (j.first_seen > ?) AS is_new, ${closedExpr('j')} AS is_closed FROM jobs j WHERE id = ?`)
+    .get(baseline, id) as (JobRow & { is_new: number; is_closed: number }) | undefined;
+  return row ? { ...row, is_new: !!row.is_new, is_closed: !!row.is_closed } : null;
 }
 
 export function setHidden(id: number, hidden: boolean): void {
@@ -532,12 +535,24 @@ const VISIBLE_REAL = "hidden = 0 AND COALESCE(source_portal, '') != 'link-only'"
 
 /** Stelle stand nicht mehr im letzten erfolgreichen Scrape ihrer Firma, ist
  *  also nicht mehr ausgeschrieben. Sie bleibt nur in der DB, weil sie einen
- *  Status/eine Bewertung hat (Lösch-Schutz in deleteStaleJobsForCompany). */
-const STALE_SQL = `EXISTS (
-  SELECT 1 FROM scraper_status s
-  WHERE s.company = jobs.company AND s.status = 'ok'
-    AND julianday(jobs.last_seen) < julianday(s.last_run) - 10.0 / 1440
-)`;
+ *  Status/eine Bewertung hat (Lösch-Schutz in deleteStaleJobsForCompany).
+ *  t = Tabellenname bzw. Alias der jobs-Tabelle in der Abfrage. */
+function staleExpr(t: string): string {
+  return `EXISTS (
+    SELECT 1 FROM scraper_status s
+    WHERE s.company = ${t}.company AND s.status = 'ok'
+      AND julianday(${t}.last_seen) < julianday(s.last_run) - 10.0 / 1440
+  )`;
+}
+
+/** Nicht mehr ausgeschrieben: aus der Firmenliste verschwunden ODER die
+ *  Stellenseite meldete das (404, "position has been filled" …). */
+function closedExpr(t: string): string {
+  return `(${staleExpr(t)} OR ${t}.enrich_note = '${NOTE_CLOSED}')`;
+}
+
+const STALE_SQL = staleExpr('jobs');
+const CLOSED_SQL = closedExpr('jobs');
 
 export interface EnrichTarget {
   id: number;
@@ -570,10 +585,6 @@ export function getJobsToEnrich(opts: { only?: string[]; force?: boolean; limit?
   }
   return opts.limit ? rows.slice(0, opts.limit) : rows;
 }
-
-/** Nicht mehr ausgeschrieben: aus der Firmenliste verschwunden ODER die
- *  Stellenseite meldete das (404, "position has been filled" …). */
-const CLOSED_SQL = `(${STALE_SQL} OR enrich_note = '${NOTE_CLOSED}')`;
 
 /** Sichtbare Stellen ohne Aufgaben/Profil, die übersprungen werden: nicht mehr
  *  ausgeschrieben bzw. nach MAX_ENRICH_ATTEMPTS Fehlversuchen aufgegeben. */

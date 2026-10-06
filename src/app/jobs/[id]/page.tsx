@@ -4,10 +4,12 @@ import { getJob } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-function NotExtracted({ note }: { note: string | null }) {
+function NotExtracted({ note, closed }: { note: string | null; closed: boolean }) {
   return (
     <p className="text-sm text-neutral-500 italic">
-      — nicht automatisch extrahiert{note ? ` (${note})` : ''} — bitte Original-Anzeige öffnen.
+      {closed
+        ? '— nicht verfügbar, die Stelle ist nicht mehr ausgeschrieben —'
+        : `— nicht automatisch extrahiert${note ? ` (${note})` : ''} — bitte Original-Anzeige öffnen.`}
     </p>
   );
 }
@@ -22,6 +24,15 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
       <div>
         <Link href="/jobs" className="text-sm text-neutral-500 hover:underline">← zurück zur Liste</Link>
       </div>
+
+      {job.is_closed && (
+        <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          <strong>Nicht mehr ausgeschrieben.</strong>{' '}
+          {job.enrich_note
+            ? 'Die Stellenseite meldet, dass die Anzeige nicht mehr verfügbar ist.'
+            : `Die Stelle stand seit dem ${new Date(job.last_seen).toISOString().slice(0, 10)} nicht mehr in der Stellenliste der Firma.`}
+        </div>
+      )}
 
       <header className="space-y-1">
         <div className="text-sm uppercase tracking-wider text-neutral-500">{job.company}</div>
@@ -57,7 +68,7 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
             {job.tasks}
           </pre>
         ) : (
-          <NotExtracted note={job.enrich_note} />
+          <NotExtracted note={job.enrich_note} closed={job.is_closed} />
         )}
       </section>
 
@@ -68,7 +79,7 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
             {job.qualifications}
           </pre>
         ) : (
-          <NotExtracted note={job.enrich_note} />
+          <NotExtracted note={job.enrich_note} closed={job.is_closed} />
         )}
       </section>
 

@@ -166,9 +166,16 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                     <StatusSelect id={j.id} status={j.status} />
                   </td>
                   <td className="px-3 py-2 align-top">
-                    <Link href={`/jobs/${j.id}`} className="hover:underline">
+                    <Link href={`/jobs/${j.id}`} className={'hover:underline' + (j.is_closed ? ' line-through text-neutral-500' : '')}>
                       {j.title}
                     </Link>
+                    {j.is_closed && (
+                      <div className="mt-1">
+                        <span className="inline-block rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-200 px-1.5 py-0.5 text-xs font-medium">
+                          nicht mehr ausgeschrieben
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-neutral-500 align-top">{j.location ?? '—'}</td>
                   <td className="px-3 py-2 text-neutral-500 whitespace-nowrap align-top">
