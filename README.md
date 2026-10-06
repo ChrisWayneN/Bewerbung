@@ -61,22 +61,6 @@ der Firmenliste), werden erkannt und übersprungen; Detailseite und Report nenne
 Ablauf bei „teilweise“: `--report` zeigt unbekannte Überschriften als `[?]` →
 Muster in `extract.ts` ergänzen → `--reextract` (lädt nichts nach).
 
-## Deutsche Übersetzung englischer Stellen
-
-Englische Aufgaben/Profile werden von Claude übersetzt (kein API-Key, keine Kosten):
-
-```bash
-npm run translate:export                       # englische Texte → translations/todo.json
-git add translations/todo.json
-git commit -m "Texte zum Uebersetzen"
-git push origin HEAD:claude/upbeat-wozniak-4x4pxd
-# Claude übersetzt → translations/de.json; danach:
-git pull origin claude/upbeat-wozniak-4x4pxd
-```
-
-Die Detailseite zeigt dann den deutschen Text, das Original bleibt aufklappbar.
-Übersetzungen hängen am Text (Hash), nicht an der Stelle – die DB wird nicht verändert.
-
 Neue Überschriften-Varianten einer Firma (z.B. „Your boarding pass“ bei Airbus)
 werden in `src/scrapers/extract.ts` in `TASK_PATTERNS` / `QUAL_PATTERNS` /
 `STOP_PATTERNS` ergänzt.
