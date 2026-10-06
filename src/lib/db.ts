@@ -35,6 +35,9 @@ export function getDb(): Database.Database {
   if (!cols.some(c => c.name === 'enrich_attempts')) {
     db.exec("ALTER TABLE jobs ADD COLUMN enrich_attempts INTEGER NOT NULL DEFAULT 0");
   }
+  if (!cols.some(c => c.name === 'enrich_note')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN enrich_note TEXT");
+  }
   // Backfill: bestehende hidden=1-Jobs in hidden_urls übernehmen, falls
   // die Tabelle leer ist (z.B. nach Schema-Migration). Idempotent durch
   // INSERT OR IGNORE.
@@ -85,6 +88,8 @@ export interface JobRow {
   status: string | null;
   enriched_at: string | null;
   enrich_attempts: number;
+  /** Grund, warum Aufgaben/Profil fehlen (z.B. Stelle nicht mehr ausgeschrieben). */
+  enrich_note: string | null;
 }
 
 export type JobRating = 'A' | 'AB' | 'B';
@@ -521,6 +526,19 @@ export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number
  *  nicht mehr angefasst (z.B. Seite offline oder nur per JavaScript lesbar). */
 export const MAX_ENRICH_ATTEMPTS = 3;
 
+export const NOTE_CLOSED = 'Stelle laut Firmenseite nicht mehr ausgeschrieben';
+
+const VISIBLE_REAL = "hidden = 0 AND COALESCE(source_portal, '') != 'link-only'";
+
+/** Stelle stand nicht mehr im letzten erfolgreichen Scrape ihrer Firma, ist
+ *  also nicht mehr ausgeschrieben. Sie bleibt nur in der DB, weil sie einen
+ *  Status/eine Bewertung hat (Lösch-Schutz in deleteStaleJobsForCompany). */
+const STALE_SQL = `EXISTS (
+  SELECT 1 FROM scraper_status s
+  WHERE s.company = jobs.company AND s.status = 'ok'
+    AND julianday(jobs.last_seen) < julianday(s.last_run) - 10.0 / 1440
+)`;
+
 export interface EnrichTarget {
   id: number;
   company: string;
@@ -530,12 +548,13 @@ export interface EnrichTarget {
   description_raw: string | null;
 }
 
-/** Stellen, deren Aufgaben/Profil noch fehlen. Ausgeblendete/abgelehnte und
- *  reine Karriereseiten-Platzhalter (link-only) werden übersprungen.
- *  force=true: alle sichtbaren Stellen, auch bereits angereicherte. */
+/** Stellen, deren Aufgaben/Profil noch fehlen. Übersprungen werden ausgeblendete/
+ *  abgelehnte Stellen, Karriereseiten-Platzhalter (link-only) und Stellen, die
+ *  nicht mehr ausgeschrieben sind. force=true: alle sichtbaren, noch gelisteten
+ *  Stellen, auch bereits angereicherte. */
 export function getJobsToEnrich(opts: { only?: string[]; force?: boolean; limit?: number } = {}): EnrichTarget[] {
   const db = getDb();
-  const where = ["hidden = 0", "COALESCE(source_portal, '') != 'link-only'"];
+  const where = [VISIBLE_REAL, `NOT ${STALE_SQL}`];
   if (!opts.force) {
     where.push('tasks IS NULL AND qualifications IS NULL');
     where.push(`enrich_attempts < ${MAX_ENRICH_ATTEMPTS}`);
@@ -552,14 +571,21 @@ export function getJobsToEnrich(opts: { only?: string[]; force?: boolean; limit?
   return opts.limit ? rows.slice(0, opts.limit) : rows;
 }
 
-/** Sichtbare Stellen ohne Aufgaben/Profil, die nach MAX_ENRICH_ATTEMPTS aufgegeben wurden. */
-export function countEnrichGivenUp(): number {
+/** Nicht mehr ausgeschrieben: aus der Firmenliste verschwunden ODER die
+ *  Stellenseite meldete das (404, "position has been filled" …). */
+const CLOSED_SQL = `(${STALE_SQL} OR enrich_note = '${NOTE_CLOSED}')`;
+
+/** Sichtbare Stellen ohne Aufgaben/Profil, die übersprungen werden: nicht mehr
+ *  ausgeschrieben bzw. nach MAX_ENRICH_ATTEMPTS Fehlversuchen aufgegeben. */
+export function getEnrichSkipCounts(): { closed: number; givenUp: number } {
   const row = getDb().prepare(`
-    SELECT COUNT(*) AS c FROM jobs
-    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only'
-      AND tasks IS NULL AND qualifications IS NULL AND enrich_attempts >= ${MAX_ENRICH_ATTEMPTS}
-  `).get() as { c: number };
-  return row.c;
+    SELECT
+      SUM(CASE WHEN ${CLOSED_SQL} THEN 1 ELSE 0 END) AS closed,
+      SUM(CASE WHEN NOT ${CLOSED_SQL} AND enrich_attempts >= ${MAX_ENRICH_ATTEMPTS} THEN 1 ELSE 0 END) AS givenUp
+    FROM jobs
+    WHERE ${VISIBLE_REAL} AND tasks IS NULL AND qualifications IS NULL
+  `).get() as { closed: number | null; givenUp: number | null };
+  return { closed: row.closed ?? 0, givenUp: row.givenUp ?? 0 };
 }
 
 /** Speichert ein erfolgreiches Ergebnis (mind. Aufgaben ODER Profil gefunden). */
@@ -568,43 +594,72 @@ export function saveEnrichment(id: number, data: { description_raw: string | nul
     UPDATE jobs SET
       description_raw = COALESCE(@description_raw, description_raw),
       tasks = @tasks, qualifications = @qualifications,
-      enriched_at = @now, enrich_attempts = enrich_attempts + 1
+      enriched_at = @now, enrich_attempts = enrich_attempts + 1, enrich_note = NULL
     WHERE id = @id
   `).run({ ...data, id, now: new Date().toISOString() });
 }
 
-/** Fehlversuch zählen. Eine gefundene Roh-Beschreibung wird trotzdem gespeichert,
- *  damit sie auf der Detailseite unter "Roh-Beschreibung" lesbar ist. */
-export function markEnrichFailed(id: number, description_raw: string | null): void {
+/** Fehlversuch zählen (note = Grund, für den Report). Eine gefundene Roh-
+ *  Beschreibung wird trotzdem gespeichert, damit sie auf der Detailseite lesbar ist. */
+export function markEnrichFailed(id: number, description_raw: string | null, note: string): void {
   getDb().prepare(`
     UPDATE jobs SET
       description_raw = COALESCE(description_raw, @description_raw),
-      enrich_attempts = enrich_attempts + 1
+      enrich_attempts = enrich_attempts + 1, enrich_note = @note
     WHERE id = @id
-  `).run({ id, description_raw });
+  `).run({ id, description_raw, note });
+}
+
+/** Stelle ist nicht mehr ausgeschrieben (404, "position has been filled" …):
+ *  nicht erneut versuchen. clearContent=true entfernt eine gespeicherte
+ *  "Beschreibung", die in Wahrheit nur die Hinweisseite war, samt daraus
+ *  extrahiertem Müll. */
+export function markEnrichClosed(id: number, clearContent: boolean): void {
+  getDb().prepare(`
+    UPDATE jobs SET
+      enrich_attempts = ${MAX_ENRICH_ATTEMPTS}, enrich_note = @note
+      ${clearContent ? ', description_raw = NULL, tasks = NULL, qualifications = NULL' : ''}
+    WHERE id = @id
+  `).run({ id, note: NOTE_CLOSED });
+}
+
+export interface IncompleteEnrichment extends EnrichTarget {
+  tasks: string | null;
+  qualifications: string | null;
+  last_seen: string;
+  status: string | null;
+  rating: string | null;
+  enrich_attempts: number;
+  enrich_note: string | null;
+  /** aus der Firmenliste verschwunden */
+  stale: number;
+  /** stale ODER Stellenseite meldete "nicht mehr verfügbar" */
+  closed: number;
 }
 
 /** Für die Diagnose: sichtbare Stellen, bei denen Aufgaben ODER Profil fehlt,
- *  obwohl schon ein Anreicherungs-Versuch lief. */
-export function getIncompleteEnrichments(): (EnrichTarget & { tasks: string | null; qualifications: string | null })[] {
+ *  obwohl schon ein Anreicherungs-Versuch lief oder sie nicht mehr gelistet sind. */
+export function getIncompleteEnrichments(): IncompleteEnrichment[] {
   return getDb().prepare(`
-    SELECT id, company, title, url, source_portal, description_raw, tasks, qualifications
+    SELECT id, company, title, url, source_portal, description_raw, tasks, qualifications,
+      last_seen, status, rating, enrich_attempts, enrich_note, (${STALE_SQL}) AS stale,
+      (${CLOSED_SQL}) AS closed
     FROM jobs
-    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only'
-      AND enrich_attempts > 0 AND (tasks IS NULL OR qualifications IS NULL)
+    WHERE ${VISIBLE_REAL}
+      AND (enrich_attempts > 0 OR ${STALE_SQL}) AND (tasks IS NULL OR qualifications IS NULL)
     ORDER BY company, title
-  `).all() as (EnrichTarget & { tasks: string | null; qualifications: string | null })[];
+  `).all() as IncompleteEnrichment[];
 }
 
 /** Für --reextract: sichtbare Stellen mit gespeicherter Beschreibung. */
 export function getStoredDescriptions(): { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[] {
   return getDb().prepare(`
     SELECT id, company, description_raw, tasks, qualifications FROM jobs
-    WHERE hidden = 0 AND COALESCE(source_portal, '') != 'link-only' AND description_raw IS NOT NULL
+    WHERE ${VISIBLE_REAL} AND description_raw IS NOT NULL
   `).all() as { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[];
 }
 
 export function updateSections(id: number, tasks: string | null, qualifications: string | null): void {
-  getDb().prepare('UPDATE jobs SET tasks = ?, qualifications = ?, enriched_at = ? WHERE id = ?')
+  getDb().prepare('UPDATE jobs SET tasks = ?, qualifications = ?, enriched_at = ?, enrich_note = NULL WHERE id = ?')
     .run(tasks, qualifications, new Date().toISOString(), id);
 }

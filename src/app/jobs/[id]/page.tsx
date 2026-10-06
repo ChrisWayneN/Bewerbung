@@ -4,6 +4,14 @@ import { getJob } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
+function NotExtracted({ note }: { note: string | null }) {
+  return (
+    <p className="text-sm text-neutral-500 italic">
+      — nicht automatisch extrahiert{note ? ` (${note})` : ''} — bitte Original-Anzeige öffnen.
+    </p>
+  );
+}
+
 export default async function JobDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const job = getJob(Number(id));
@@ -49,7 +57,7 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
             {job.tasks}
           </pre>
         ) : (
-          <p className="text-sm text-neutral-500 italic">— nicht automatisch extrahiert — bitte Original-Anzeige öffnen.</p>
+          <NotExtracted note={job.enrich_note} />
         )}
       </section>
 
@@ -60,7 +68,7 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
             {job.qualifications}
           </pre>
         ) : (
-          <p className="text-sm text-neutral-500 italic">— nicht automatisch extrahiert — bitte Original-Anzeige öffnen.</p>
+          <NotExtracted note={job.enrich_note} />
         )}
       </section>
 

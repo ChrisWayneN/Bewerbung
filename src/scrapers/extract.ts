@@ -54,7 +54,8 @@ const QUAL_PATTERNS: RegExp[] = [
 ];
 const QUAL_PATTERNS_STRONG: RegExp[] = [
   /\bskills\b/, /\bkenntnisse\b/, /\bkompetenzen\b/, /\berfahrung(en)?\b/,
-  /\byou have\b/, /\byou are\b/,
+  // Nur am Zeilenanfang ("You are …:") – sonst trifft z.B. "The page you are trying to access".
+  /^you have\b/, /^you are\b/,
 ];
 
 /** Beenden den aktuellen Abschnitt. Werden VOR Aufgaben/Profil geprüft. */
@@ -310,6 +311,37 @@ function isHtml(input: string): boolean {
 /** HTML oder Text – je nachdem, ob Tags enthalten sind. */
 export function extractSections(input: string): ExtractedSections {
   return isHtml(input) ? extractSectionsFromHtml(input) : extractSectionsFromText(input);
+}
+
+/** Hinweisseiten statt Stellenanzeige: Stelle besetzt/abgelaufen, nur intern,
+ *  oder Weiterleitung auf die Job-Übersicht (Greenhouse macht das bei
+ *  geschlossenen Stellen). Muster gegen normalisierten Text (ä→ae usw.). */
+const CLOSED_PATTERNS: RegExp[] = [
+  /\bposition has been (filled|closed)\b/, /\bthis (job|position|posting|vacancy) (is|has been) (closed|filled|expired)\b/,
+  /\b(job|position|posting|vacancy) (is )?no longer (available|active|open|online)\b/,
+  /\bno longer accepting applications\b/, /\b(job|posting) has expired\b/,
+  /\bpage you are trying to access is for employees\b/,
+  /\bthe job you are looking for (is no longer|could not be found|does not exist)\b/,
+  /\bcurrent openings at\b/, // Greenhouse-Übersicht nach Umleitung
+  /\b(stelle|stellenanzeige|anzeige|position) (ist|wurde) (leider )?(bereits )?(besetzt|vergeben|geschlossen)\b/,
+  /\b(stelle|stellenanzeige|anzeige|stellenangebot) (ist )?(leider )?nicht mehr (verfuegbar|aktiv|online|ausgeschrieben|vorhanden)\b/,
+  /\bdiese stelle (existiert|gibt es) (leider )?nicht mehr\b/,
+];
+
+/** true, wenn der Text nach einer Hinweisseite "Stelle nicht mehr verfügbar"
+ *  aussieht. Nur zusammen mit einer fehlgeschlagenen Extraktion verwenden – eine
+ *  echte Anzeige mit Aufgaben UND Profil gilt nie als geschlossen. */
+export function looksLikeClosedPosting(input: string): boolean {
+  let text = input;
+  if (isHtml(input)) {
+    // Nur Hauptinhalt: ein Footer-/Widget-Satz wie "Diese Stelle ist nicht mehr
+    // verfügbar, falls …" darf eine echte Anzeige nicht als geschlossen markieren.
+    const $ = cheerio.load(input);
+    $('script, style, noscript, nav, footer, form, aside, [role="navigation"], [class*="cookie" i], [id*="cookie" i]').remove();
+    text = $.root().text();
+  }
+  const t = normalize(text.slice(0, 50_000));
+  return CLOSED_PATTERNS.some(r => r.test(t));
 }
 
 /** Diagnose: alle Überschriften-artigen Zeilen einer Beschreibung samt Zuordnung

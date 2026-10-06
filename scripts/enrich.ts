@@ -14,8 +14,8 @@
  *                                          Regeln neu zerlegen (lädt nichts, dauert Sekunden)
  */
 import { enrichJobs } from '../src/scrapers/enrich';
-import { explainHeadings, extractSections } from '../src/scrapers/extract';
-import { getIncompleteEnrichments, getStoredDescriptions, updateSections } from '../src/lib/db';
+import { explainHeadings, extractSections, looksLikeClosedPosting } from '../src/scrapers/extract';
+import { getIncompleteEnrichments, getStoredDescriptions, updateSections, markEnrichClosed } from '../src/lib/db';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -38,51 +38,72 @@ function matchesOnly(company: string, only?: string[]): boolean {
 
 /** Neu zerlegen ohne Netz. Übernommen wird nur, was mindestens genauso viele
  *  Abschnitte findet wie bisher – eine Regel-Änderung kann so nichts verschlechtern,
- *  korrigiert aber falsch zugeordnete Inhalte. */
+ *  korrigiert aber falsch zugeordnete Inhalte. Gespeicherte Hinweisseiten
+ *  ("position has been filled") samt daraus extrahiertem Müll werden entfernt. */
 function reextract(only?: string[]) {
   const rows = getStoredDescriptions().filter(r => matchesOnly(r.company, only));
   const score = (t: string | null, q: string | null) => (t ? 1 : 0) + (q ? 1 : 0);
-  let changed = 0, improved = 0;
+  let changed = 0, improved = 0, closed = 0;
   for (const r of rows) {
     const s = extractSections(r.description_raw);
-    if (s.tasks === r.tasks && s.qualifications === r.qualifications) continue;
-    const before = score(r.tasks, r.qualifications);
     const after = score(s.tasks, s.qualifications);
-    if (after < before) continue;
+    if (after < 2 && looksLikeClosedPosting(r.description_raw)) {
+      markEnrichClosed(r.id, true);
+      closed++;
+      continue;
+    }
+    if (s.tasks === r.tasks && s.qualifications === r.qualifications) continue;
+    if (after < score(r.tasks, r.qualifications)) continue;
     updateSections(r.id, s.tasks, s.qualifications);
     changed++;
-    if (after > before) improved++;
+    if (after > score(r.tasks, r.qualifications)) improved++;
   }
   console.log(`${rows.length} gespeicherte Beschreibungen neu zerlegt: ${changed} geändert, davon ${improved} mit mehr gefundenen Abschnitten.`);
+  if (closed) console.log(`${closed} gespeicherte "Beschreibungen" waren Hinweisseiten (Stelle nicht mehr ausgeschrieben) – entfernt.`);
 }
 
 const KIND_LABEL: Record<string, string> = { task: 'Aufgaben', qual: 'Profil', stop: 'Stopp' };
 
 function report(only?: string[]) {
-  const rows = getIncompleteEnrichments().filter(r => matchesOnly(r.company, only));
-  if (!rows.length) {
+  const all = getIncompleteEnrichments().filter(r => matchesOnly(r.company, only));
+  const open = all.filter(r => !r.closed);
+  const closed = all.filter(r => r.closed);
+  if (!all.length) {
     console.log('Keine Stellen mit fehlenden Abschnitten.');
     return;
   }
-  for (const r of rows) {
+
+  let unknownHeadings = 0;
+  if (open.length) console.log(`=== Unvollständig (${open.length}) – hier kann nachgebessert werden`);
+  for (const r of open) {
     const missing = [!r.tasks && 'Aufgaben', !r.qualifications && 'Profil'].filter(Boolean).join(' + ');
     console.log(`\n■ ${r.company} – ${r.title}`);
-    console.log(`  fehlt: ${missing}`);
+    console.log(`  fehlt: ${missing} · Versuche: ${r.enrich_attempts}`);
+    if (r.enrich_note) console.log(`  Grund: ${r.enrich_note}`);
     console.log(`  ${r.url}`);
-    if (!r.description_raw) {
-      console.log('  (keine Beschreibung gespeichert – Seite lieferte keinen Text)');
-      continue;
-    }
+    if (!r.description_raw) continue;
     const headings = explainHeadings(r.description_raw);
     if (!headings.length) {
       console.log('  (keine Überschriften erkannt – Text ohne fette Zeilen/Überschriften)');
       continue;
     }
     for (const h of headings.slice(0, 25)) {
+      if (!h.kind) unknownHeadings++;
       console.log(`    [${(h.kind ? KIND_LABEL[h.kind] : '?').padEnd(8)}] ${h.text}`);
     }
   }
-  console.log(`\n${rows.length} Stellen. Zeilen mit [?] sind unbekannte Überschriften – die bitte an Claude schicken.`);
+
+  if (closed.length) {
+    console.log(`\n=== Nicht mehr ausgeschrieben (${closed.length}) – nichts zu tun`);
+    console.log('    Bleiben nur wegen Status/Bewertung in der Liste bzw. Seite meldet "nicht mehr verfügbar".');
+    for (const r of closed) {
+      const marks = [r.status, r.rating && `Bewertung ${r.rating}`].filter(Boolean).join(', ');
+      const why = r.stale ? `nicht mehr gelistet seit ${r.last_seen.slice(0, 10)}` : 'Seite: nicht mehr verfügbar';
+      console.log(`  · ${r.company} – ${r.title}  (${why}${marks ? '; ' + marks : ''})`);
+    }
+  }
+
+  if (unknownHeadings) console.log(`\nZeilen mit [?] sind unbekannte Überschriften – die bitte an Claude schicken.`);
 }
 
 const opts = parseArgs();

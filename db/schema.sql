@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   rating TEXT,         -- 'A' | 'AB' | 'B' | NULL
   status TEXT,         -- 'gelesen' | 'beworben' | 'prozess' | 'abgelehnt' | NULL
   enriched_at TEXT,    -- Zeitpunkt der letzten erfolgreichen Detail-Anreicherung
-  enrich_attempts INTEGER NOT NULL DEFAULT 0  -- Versuche, Aufgaben/Profil zu laden
+  enrich_attempts INTEGER NOT NULL DEFAULT 0, -- Versuche, Aufgaben/Profil zu laden
+  enrich_note TEXT     -- Grund des letzten Fehlschlags (z.B. nicht mehr ausgeschrieben)
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);

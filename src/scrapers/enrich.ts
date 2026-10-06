@@ -1,8 +1,9 @@
 import * as cheerio from 'cheerio';
 import { fetchText, fetchJson } from './base';
-import { extractSections, sanitizeHtml, type ExtractedSections } from './extract';
+import { extractSections, sanitizeHtml, looksLikeClosedPosting, type ExtractedSections } from './extract';
 import {
-  getJobsToEnrich, saveEnrichment, markEnrichFailed, countEnrichGivenUp, MAX_ENRICH_ATTEMPTS, type EnrichTarget,
+  getJobsToEnrich, saveEnrichment, markEnrichFailed, markEnrichClosed, getEnrichSkipCounts,
+  MAX_ENRICH_ATTEMPTS, type EnrichTarget,
 } from '../lib/db';
 
 /**
@@ -73,24 +74,35 @@ function jsonLdDescriptions($: cheerio.CheerioAPI): string[] {
   return out;
 }
 
-/** Lädt die Stellenseite und liefert alle Kandidaten für die Beschreibung. */
-async function fetchCandidates(job: EnrichTarget): Promise<Candidate[]> {
-  const cands: Candidate[] = [];
+/** Stelle existiert nicht mehr (z.B. R&S-Eintrag aus der Liste verschwunden). */
+class ClosedPostingError extends Error {}
 
+/** 404/410 heißt: die Anzeige ist weg – kein Grund, es noch zweimal zu versuchen. */
+function isGoneError(e: unknown): boolean {
+  if (e instanceof ClosedPostingError) return true;
+  return e instanceof Error && /^HTTP (404|410)\b/.test(e.message);
+}
+
+/** Lädt die Stellenseite und liefert alle Kandidaten für die Beschreibung.
+ *  closed=true, wenn die Seite wie eine "Stelle nicht mehr verfügbar"-Hinweisseite aussieht. */
+async function fetchCandidates(job: EnrichTarget): Promise<{ cands: Candidate[]; closed: boolean }> {
   // Helsing: helsing.ai blockt Node-Requests (Cloudflare 429), die Inhalte kommen
   // aber ohnehin aus Greenhouse – dort per Job-ID direkt abrufbar.
   const helsing = job.url.match(/helsing\.ai\/(?:[a-z]{2}\/)?jobs\/(\d+)/);
   if (helsing) {
     const d = await fetchJson<{ content?: string }>(`https://boards-api.greenhouse.io/v1/boards/helsing/jobs/${helsing[1]}`);
-    if (d.content) cands.push({ source: 'greenhouse-api', content: looksEscaped(d.content) ? decodeEntities(d.content) : d.content });
-    return cands;
+    const cands = d.content
+      ? [{ source: 'greenhouse-api', content: looksEscaped(d.content) ? decodeEntities(d.content) : d.content }]
+      : [];
+    return { cands, closed: false };
   }
 
   // Rohde & Schwarz: unsere URL ist die Ergebnisliste mit Sprungmarke #job-<id>.
   const rs = job.url.match(/^([^#]*karriere-stellenangebote_251573\.html[^#]*)#job-([\w-]+)$/);
-  if (rs) return rohdeCandidates(rs[1], rs[2]);
+  if (rs) return { cands: await rohdeCandidates(rs[1], rs[2]), closed: false };
 
-  return candidatesFromPage(await fetchText(job.url));
+  const html = await fetchText(job.url);
+  return { cands: candidatesFromPage(html), closed: looksLikeClosedPosting(html) };
 }
 
 /** JSON-LD + typische Beschreibungs-Container einer Stellenseite. */
@@ -153,14 +165,14 @@ async function rohdeCandidates(listingUrl: string, jobId: string): Promise<Candi
     if (item.length) cands.push({ source: 'rs-accordion', content: $.html(item) });
     return cands;
   }
-  throw new Error(`Stelle job-${jobId} nicht mehr in der R&S-Liste`);
+  throw new ClosedPostingError(`Stelle job-${jobId} nicht mehr in der R&S-Liste`);
 }
 
 function score(s: ExtractedSections): number {
   return (s.tasks ? 1 : 0) + (s.qualifications ? 1 : 0);
 }
 
-type Outcome = 'voll' | 'teilweise' | 'nichts' | 'fehler';
+type Outcome = 'voll' | 'teilweise' | 'nichts' | 'geschlossen' | 'fehler';
 
 interface Pick { sections: ExtractedSections; cand: Candidate }
 
@@ -176,23 +188,42 @@ function pickBest(cands: Candidate[], current: Pick | null): Pick | null {
 }
 
 async function enrichOne(job: EnrichTarget): Promise<{ outcome: Outcome; error?: string }> {
-  // 1. Schon gespeicherte Beschreibung (z.B. von Workday/Personio mitgeliefert):
+  // Eine früher gespeicherte "Beschreibung", die in Wahrheit eine Hinweisseite
+  // ("position has been filled") war, zählt nicht als Quelle.
+  const storedIsNotice = !!job.description_raw
+    && looksLikeClosedPosting(job.description_raw)
+    && score(extractSections(job.description_raw)) < 2;
+
+  // 1. Schon gespeicherte Beschreibung (z.B. aus Recruitee/KNDS-API oder Workday):
   //    reicht sie, muss die Seite gar nicht geladen werden.
-  let best = pickBest(job.description_raw ? [{ source: 'gespeichert', content: job.description_raw }] : [], null);
+  let best = pickBest(job.description_raw && !storedIsNotice ? [{ source: 'gespeichert', content: job.description_raw }] : [], null);
 
   // 2. Stellenseite laden.
   let cands: Candidate[] = [];
+  let closed = false;
   if (!best || score(best.sections) < 2) {
     try {
-      cands = await fetchCandidates(job);
+      ({ cands, closed } = await fetchCandidates(job));
     } catch (e) {
-      // Seite nicht erreichbar – mit dem Gespeicherten weitermachen, falls es etwas hergab.
-      if (!best || score(best.sections) === 0) {
-        markEnrichFailed(job.id, null);
-        return { outcome: 'fehler', error: e instanceof Error ? e.message : String(e) };
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isGoneError(e)) {
+        closed = true;
+      } else if (!best || score(best.sections) === 0) {
+        // Seite (vorübergehend?) nicht erreichbar und nichts Gespeichertes → später erneut.
+        markEnrichFailed(job.id, null, `Fehler: ${msg.slice(0, 200)}`);
+        return { outcome: 'fehler', error: msg };
       }
     }
     best = pickBest(cands, best);
+  }
+
+  // Anzeige ist weg (404, "position has been filled", Umleitung auf die Übersicht).
+  // Echte gespeicherte Inhalte (z.B. aus der API) bleiben erhalten; Abschnitte, die
+  // nur aus der Hinweisseite stammen, werden verworfen.
+  const keepStored = best?.cand.source === 'gespeichert' && score(best.sections) > 0;
+  if (closed && score(best?.sections ?? { tasks: null, qualifications: null }) < 2 && !keepStored) {
+    markEnrichClosed(job.id, storedIsNotice);
+    return { outcome: 'geschlossen' };
   }
 
   // Als Roh-Beschreibung den spezifischsten Kandidaten speichern, nie die ganze Seite.
@@ -205,7 +236,7 @@ async function enrichOne(job: EnrichTarget): Promise<{ outcome: Outcome; error?:
     : null;
 
   if (!best || score(best.sections) === 0) {
-    markEnrichFailed(job.id, raw);
+    markEnrichFailed(job.id, raw, 'Seite geladen, aber keine Aufgaben/Profil-Überschriften erkannt');
     return { outcome: 'nichts' };
   }
   saveEnrichment(job.id, { description_raw: raw, ...best.sections });
@@ -225,15 +256,18 @@ export async function enrichJobs(opts: EnrichOptions = {}) {
   const log = opts.log ?? console.log;
   pageCache = new Map();
   const jobs = getJobsToEnrich({ only: opts.only, force: opts.force, limit: opts.limit });
+  const skip = getEnrichSkipCounts();
+  const skipInfo = [
+    skip.closed && `${skip.closed} nicht mehr ausgeschriebene übersprungen`,
+    !opts.force && skip.givenUp && `${skip.givenUp} nach ${MAX_ENRICH_ATTEMPTS} Fehlversuchen aufgegeben ("npm run enrich -- --force" versucht sie erneut)`,
+  ].filter(Boolean).join(', ');
+
   if (!jobs.length) {
-    const givenUp = opts.force ? 0 : countEnrichGivenUp();
-    log(givenUp
-      ? `▶ Details (Aufgaben/Profil): nichts zu tun. ${givenUp} Stellen ohne Ergebnis wurden nach ${MAX_ENRICH_ATTEMPTS} Versuchen aufgegeben (mit "npm run enrich -- --force" erneut versuchen).`
-      : '▶ Details (Aufgaben/Profil): nichts zu tun – alle sichtbaren Stellen sind angereichert.');
+    log(`▶ Details (Aufgaben/Profil): nichts zu tun.${skipInfo ? ` (${skipInfo})` : ''}`);
     return { total: 0, stats: {} as Record<string, Record<Outcome, number>> };
   }
 
-  log(`▶ Details (Aufgaben/Profil) für ${jobs.length} Stellen laden …`);
+  log(`▶ Details (Aufgaben/Profil) für ${jobs.length} Stellen laden …${skipInfo ? ` (${skipInfo})` : ''}`);
   const byCompany = new Map<string, EnrichTarget[]>();
   for (const j of jobs) {
     if (!byCompany.has(j.company)) byCompany.set(j.company, []);
@@ -248,7 +282,7 @@ export async function enrichJobs(opts: EnrichOptions = {}) {
   async function worker() {
     while (queue.length) {
       const [company, list] = queue.shift()!;
-      stats[company] = { voll: 0, teilweise: 0, nichts: 0, fehler: 0 };
+      stats[company] = { voll: 0, teilweise: 0, nichts: 0, geschlossen: 0, fehler: 0 };
       for (const job of list) {
         const r = await enrichOne(job);
         stats[company][r.outcome]++;
@@ -264,11 +298,11 @@ export async function enrichJobs(opts: EnrichOptions = {}) {
   await Promise.all(Array.from({ length: opts.concurrency ?? 4 }, () => worker()));
 
   log('');
-  log('  Firma                 Stellen  vollständig  teilweise  nichts  Fehler');
+  log('  Firma                 Stellen  vollständig  teilweise  nichts  nicht mehr online  Fehler');
   for (const [company, s] of Object.entries(stats).sort(([a], [b]) => a.localeCompare(b))) {
-    const n = s.voll + s.teilweise + s.nichts + s.fehler;
+    const n = s.voll + s.teilweise + s.nichts + s.geschlossen + s.fehler;
     const icon = s.nichts + s.fehler === 0 ? '✅' : s.voll + s.teilweise > 0 ? '⚠️' : '❌';
-    log(`${icon} ${company.padEnd(20)} ${String(n).padStart(7)}  ${String(s.voll).padStart(11)}  ${String(s.teilweise).padStart(9)}  ${String(s.nichts).padStart(6)}  ${String(s.fehler).padStart(6)}`);
+    log(`${icon} ${company.padEnd(20)} ${String(n).padStart(7)}  ${String(s.voll).padStart(11)}  ${String(s.teilweise).padStart(9)}  ${String(s.nichts).padStart(6)}  ${String(s.geschlossen).padStart(17)}  ${String(s.fehler).padStart(6)}`);
   }
   const failedCompanies = Object.keys(samples);
   if (failedCompanies.length) {

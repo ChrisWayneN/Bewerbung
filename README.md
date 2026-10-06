@@ -55,6 +55,9 @@ npm run enrich -- --reextract        # gespeicherte Beschreibungen mit neuen Reg
 npm run clear-enrichment             # alle extrahierten Inhalte löschen
 ```
 
+Stellen, die nicht mehr ausgeschrieben sind (404, „position has been filled“, nicht mehr in
+der Firmenliste), werden erkannt und übersprungen; Detailseite und Report nennen den Grund.
+
 Ablauf bei „teilweise“: `--report` zeigt unbekannte Überschriften als `[?]` →
 Muster in `extract.ts` ergänzen → `--reextract` (lädt nichts nach).
 
