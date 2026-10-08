@@ -38,7 +38,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Agile Robots SE', careersUrl: 'https://job-boards.eu.greenhouse.io/agilerobotsse/',   portal: 'greenhouse-html-eu', status: '✅', note: 'Seit 10/2026 Greenhouse-EU-Board (vorher Personio). Ganzes Board per ?page=N, München-Filter clientseitig über die Ortsangabe.' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE&optionsFacetsDD_customfield2=Engineering&optionsFacetsDD_customfield1=Professionals', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors, job-tile-DOM. Facetten: country=DE + Engineering (customfield2) + Professionals (customfield1); Standort clientseitig via isMunichArea (Fürstenfeldbruck/Taufkirchen/Ottobrunn). Filter anpassbar über customfield1/2.' },
   { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
-  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/en_US/externaljobs/SearchJobs', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit echten Location-Facet-IDs (Country=Germany/812132, State=Bavaria/813141, City=München/912803) aus Browser-Netzwerk-Analyse, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
+  { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/de_DE/externaljobs/SearchJobs/?42386=%5B812132%5D&42386_format=17546&42387=%5B813141%5D&42387_format=17547&42388=%5B912803%5D&42388_format=17879&42390=%5B102157%5D&42390_format=17550&43471=%5B811689%5D&43471_format=17871&42393=%5B811925%5D&42393_format=17552&listFilterMode=1', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit Facet-IDs (Germany/Bavaria/München + 3 Filter aus der Karriere-URL 10/2026), Blättern per folderOffset, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995&locations=f5811cef9cb501a49eac0a694c0a8244&jobFamilyGroup=f5811cef9cb5018463377f3f550a1bf2&jobFamilyGroup=f5811cef9cb501e5d34e803f550a21f2', portal: 'workday', status: '✅', note: 'wd3, tenant=ag, site=Airbus. Server-seitige appliedFacets: München-Standort + 2 bewusst gewählte Job-Familien (nicht alle Kategorien).' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
@@ -187,9 +187,8 @@ const SIEMENS_SEARCH_URL = 'https://jobs.siemens.com/en_US/externaljobs/SearchJo
  *  Location-Facet-IDs verwenden, die aus der Browser-Netzwerk-Analyse
  *  stammen (Country=Germany/812132, State=Bavaria/813141, City=München/
  *  912803) – Avature unterstützt GET mit diesen Query-Params direkt
- *  (kein POST/Session-State nötig). "Field of work" und "Experience Level"
- *  werden bewusst weggelassen, um wie bei den anderen Firmen ALLE Münchner
- *  Stellen zu bekommen statt nur bestimmte Kategorien/Level.
+ *  (kein POST/Session-State nötig). Seit 10/2026 zusätzlich die drei Filter
+ *  aus der vom Nutzer gefilterten Karriere-URL (42390/43471/42393).
  *  Falls Siemens die IDs mal rotiert: neue URL per DevTools (Netzwerk-
  *  Analyse) beim manuellen Filtern auf München nachschauen und die drei
  *  Facet-IDs unten ersetzen. */
@@ -201,11 +200,18 @@ async function scrapeSiemens(): Promise<JobInput[]> {
     '42387_format': '17547',
     '42388': '[912803]', // City: München
     '42388_format': '17879',
+    // Weitere Filter aus der von Hand gefilterten Karriere-URL (10/2026), z.B.
+    // Fachbereich/Erfahrungslevel – IDs 1:1 übernommen, Namen nicht im HTML.
+    '42390': '[102157]',
+    '42390_format': '17550',
+    '43471': '[811689]',
+    '43471_format': '17871',
+    '42393': '[811925]',
+    '42393_format': '17552',
     listFilterMode: '1',
-    // Avature-Seitengröße – je nach Konfiguration heißt der Parameter anders und
-    // wird ggf. ignoriert; deshalb wird unten zusätzlich geblättert.
+    // Seitengröße wird von Avature ggf. ignoriert (Standard 6) – deshalb wird
+    // unten per folderOffset geblättert.
     folderRecordsPerPage: '100',
-    jobRecordsPerPage: '100',
   });
   const firstUrl = `${SIEMENS_SEARCH_URL}/?${params.toString()}`;
   const out: JobInput[] = [];
@@ -252,13 +258,13 @@ async function scrapeSiemens(): Promise<JobInput[]> {
     if (out.length === before) break; // Seite ohne neue Stellen → Ende
     if (total !== null && out.length >= total) break;
 
-    // Nächste Seite: Avature-"Weiter"-Link; sonst per jobOffset weiterzählen.
+    // Nächste Seite: Avature-"Weiter"-Link; sonst per folderOffset weiterzählen.
     const nextHref = $('a.paginationNextLink, a[rel="next"], a[aria-label*="next" i], a[title*="next" i]').first().attr('href');
     if (nextHref) {
       url = new URL(nextHref, SIEMENS_SEARCH_URL).toString();
     } else {
       const u = new URL(firstUrl);
-      u.searchParams.set('jobOffset', String(out.length));
+      u.searchParams.set('folderOffset', String(out.length));
       url = u.toString();
     }
   }
