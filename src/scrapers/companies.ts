@@ -202,53 +202,77 @@ async function scrapeSiemens(): Promise<JobInput[]> {
     '42388': '[912803]', // City: München
     '42388_format': '17879',
     listFilterMode: '1',
+    // Avature-Seitengröße – je nach Konfiguration heißt der Parameter anders und
+    // wird ggf. ignoriert; deshalb wird unten zusätzlich geblättert.
     folderRecordsPerPage: '100',
+    jobRecordsPerPage: '100',
   });
-  const url = `${SIEMENS_SEARCH_URL}/?${params.toString()}`;
-  const html = await fetchText(url);
-  const $ = cheerio.load(html);
+  const firstUrl = `${SIEMENS_SEARCH_URL}/?${params.toString()}`;
   const out: JobInput[] = [];
-  $('article.article--result').each((_, el) => {
-    const $el = $(el);
-    const a = $el.find('a.link[href*="JobDetail"]').first();
-    const href = a.attr('href');
-    const title = a.text().trim().replace(/\s+/g, ' ');
-    const city = $el.find('.list-item-jobCity').first().text().trim();
-    if (!href || !title) return;
-    const job: JobInput = {
-      company: 'Siemens',
-      title,
-      location: city || 'München',
-      url: href,
-      source_portal: 'avature-html',
-    };
-    job.hash = hashJob(job);
-    out.push(job);
-  });
-  // Fallback: Avature hat das Listen-Markup geändert, die Links gibt es aber noch.
-  // Die Facet-URL filtert bereits auf München, daher ohne Ort übernehmen.
-  if (out.length === 0) {
-    const seen = new Set<string>();
-    $('a[href*="JobDetail"]').each((_, a) => {
-      const href = $(a).attr('href');
-      const title = $(a).text().trim().replace(/\s+/g, ' ');
-      if (!href || title.length < 6 || seen.has(href) || /share|teilen|apply|bewerben/i.test(title)) return;
-      seen.add(href);
-      const job: JobInput = { company: 'Siemens', title, location: 'München', url: new URL(href, SIEMENS_SEARCH_URL).toString(), source_portal: 'avature-html' };
+  const seen = new Set<string>();
+  let url: string | null = firstUrl;
+  let pages = 0;
+  let total: number | null = null;
+  let $: cheerio.CheerioAPI | null = null;
+  let html = '';
+
+  while (url && pages < 60) {
+    html = await fetchText(url);
+    pages++;
+    $ = cheerio.load(html);
+    if (total === null) {
+      // z.B. "1-6 of 245 results" / "245 Ergebnisse"
+      const m = $('body').text().replace(/\s+/g, ' ').match(/\b(?:of|von)\s+([\d.,]+)\s+(?:results?|jobs?|ergebnis|stellen)/i)
+        ?? $('body').text().replace(/\s+/g, ' ').match(/\b([\d.,]+)\s+(?:results?|ergebnisse|jobs found|stellen gefunden)\b/i);
+      if (m) total = Number(m[1].replace(/[.,]/g, ''));
+    }
+    const before = out.length;
+    const add = (href: string | undefined, title: string, city: string) => {
+      if (!href || !title) return;
+      const full = new URL(href, SIEMENS_SEARCH_URL).toString();
+      if (seen.has(full)) return;
+      seen.add(full);
+      const job: JobInput = { company: 'Siemens', title, location: city || 'München', url: full, source_portal: 'avature-html' };
       job.hash = hashJob(job);
       out.push(job);
+    };
+    $('article.article--result').each((_, el) => {
+      const a = $!(el).find('a.link[href*="JobDetail"]').first();
+      add(a.attr('href'), a.text().trim().replace(/\s+/g, ' '), $!(el).find('.list-item-jobCity').first().text().trim());
     });
-    if (out.length) console.log(`  [debug Siemens] Listen-Markup geändert – ${out.length} Stellen über JobDetail-Links übernommen (ohne Ortsangabe).`);
+    // Fallback: Avature hat das Listen-Markup geändert, die Links gibt es aber noch.
+    // Die Facet-URL filtert bereits auf München, daher ohne Ort übernehmen.
+    if (!$('article.article--result').length) {
+      $('a[href*="JobDetail"]').each((_, a) => {
+        const title = $!(a).text().trim().replace(/\s+/g, ' ');
+        if (title.length < 6 || /share|teilen|apply|bewerben/i.test(title)) return;
+        add($!(a).attr('href'), title, '');
+      });
+    }
+    if (out.length === before) break; // Seite ohne neue Stellen → Ende
+    if (total !== null && out.length >= total) break;
+
+    // Nächste Seite: Avature-"Weiter"-Link; sonst per jobOffset weiterzählen.
+    const nextHref = $('a.paginationNextLink, a[rel="next"], a[aria-label*="next" i], a[title*="next" i]').first().attr('href');
+    if (nextHref) {
+      url = new URL(nextHref, SIEMENS_SEARCH_URL).toString();
+    } else {
+      const u = new URL(firstUrl);
+      u.searchParams.set('jobOffset', String(out.length));
+      url = u.toString();
+    }
   }
+
   const munich = out.filter(j => isMunichArea(j.location));
-  if (munich.length === 0) {
+  console.log(`  [debug Siemens] ${pages} Seite(n) geladen, ${out.length} Stellen${total !== null ? ` (Seite meldet ${total})` : ''}, davon ${munich.length} im Raum München.`);
+  if (munich.length === 0 && $) {
     const pageTitle = $('title').first().text().trim().replace(/\s+/g, ' ');
     const blocked = /captcha|access denied|forbidden|request blocked|cloudflare|are you a robot/i.test(html);
     const cities = [...new Set(out.map(j => j.location))].slice(0, 8).join(' | ');
     console.log(`  [debug Siemens] 0 Treffer. HTML ${html.length} Bytes, Seitentitel "${pageTitle}", `
-      + `${$('article').length} <article>, ${$('a[href*="JobDetail"]').length} JobDetail-Links, `
-      + `${out.length} Stellen vor München-Filter${cities ? ` (Orte: ${cities})` : ''}${blocked ? ' – Seite sieht nach Bot-Sperre aus!' : ''}`);
-    console.log(`  [debug Siemens] Abgefragte URL: ${url}`);
+      + `${$('article').length} <article>, ${$('a[href*="JobDetail"]').length} JobDetail-Links`
+      + `${cities ? ` (Orte: ${cities})` : ''}${blocked ? ' – Seite sieht nach Bot-Sperre aus!' : ''}`);
+    console.log(`  [debug Siemens] Abgefragte URL: ${firstUrl}`);
   }
   return munich;
 }
