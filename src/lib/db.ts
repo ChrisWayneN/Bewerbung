@@ -676,6 +676,16 @@ export function getStoredDescriptions(): { id: number; company: string; descript
   `).all() as { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[];
 }
 
+/** Gespeicherte Beschreibung war unbrauchbar (z.B. nur Vorlagen-Platzhalter):
+ *  alles verwerfen, damit die nächste Anreicherung die Stelle neu lädt. */
+export function resetEnrichment(id: number): void {
+  getDb().prepare(`
+    UPDATE jobs SET description_raw = NULL, tasks = NULL, qualifications = NULL,
+      enriched_at = NULL, enrich_attempts = 0, enrich_note = NULL
+    WHERE id = ?
+  `).run(id);
+}
+
 export function updateSections(id: number, tasks: string | null, qualifications: string | null): void {
   getDb().prepare('UPDATE jobs SET tasks = ?, qualifications = ?, enriched_at = ?, enrich_note = NULL WHERE id = ?')
     .run(tasks, qualifications, new Date().toISOString(), id);

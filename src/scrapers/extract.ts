@@ -135,6 +135,20 @@ function headingStyle(l: Line): 'h' | 'b' | 'colon' | null {
   return null;
 }
 
+/** Platzhaltertext aus Stellen-Vorlagen ("Lorem Ipsum", bei KNDS auch "Lorem Impsum"). */
+const PLACEHOLDER_RE = /\blorem\s+im?psum\b|\bdolor sit amet\b/i;
+function isPlaceholder(text: string): boolean {
+  return PLACEHOLDER_RE.test(text) && text.replace(PLACEHOLDER_RE, '').replace(/[^a-zäöüß]+/gi, '').length < 40;
+}
+
+/** Beschreibung besteht nur aus Vorlagen-Platzhaltern (z.B. API-Feld noch nicht
+ *  befüllt) – dann taugt sie nicht als Quelle, die echte Seite muss geladen werden. */
+export function isPlaceholderDescription(raw: string | null | undefined): boolean {
+  if (!raw || !PLACEHOLDER_RE.test(raw)) return false;
+  const s = extractSections(raw);
+  return !s.tasks && !s.qualifications;
+}
+
 function sectionsFromLines(lines: Line[]): ExtractedSections {
   // Wie sehen die erkannten Überschriften in DIESER Anzeige aus (h3? fetter
   // Absatz?). Eine unbekannte Zeile im selben Stil ist sehr wahrscheinlich
@@ -150,9 +164,13 @@ function sectionsFromLines(lines: Line[]): ExtractedSections {
   let mode: 'task' | 'qual' | null = null;
   const out = { task: [] as string[], qual: [] as string[] };
   const seen = { task: new Set<string>(), qual: new Set<string>() };
+  // Zwischenüberschrift eines zweiten Abschnitts derselben Art – erst übernehmen,
+  // wenn auch Inhalt folgt (sonst stehen leere "Ihre Aufgaben:"-Zeilen im Ergebnis).
+  const pending = { task: null as string | null, qual: null as string | null };
 
   for (const l of lines) {
     const t = l.text;
+    if (isPlaceholder(t)) continue;
     if (!l.li) {
       const n = normalize(t).replace(/^[^a-z0-9]+/, '');
       if (STOP_SENTENCES.some(r => r.test(n))) { mode = null; continue; }
@@ -172,7 +190,7 @@ function sectionsFromLines(lines: Line[]): ExtractedSections {
         mode = kind;
         // Zweiter Abschnitt derselben Art (z.B. "Must have" + "Nice to have"):
         // Überschrift mitnehmen, damit die Gliederung erhalten bleibt.
-        if (out[kind].length > 0) out[kind].push('', t.replace(/[:：]\s*$/, '') + ':');
+        pending[kind] = out[kind].length > 0 ? t.replace(/[:：]\s*$/, '') + ':' : null;
         continue;
       }
       // Unbekannte Überschrift im Stil der bekannten (oder echte <h1-6>) beendet
@@ -185,6 +203,7 @@ function sectionsFromLines(lines: Line[]): ExtractedSections {
     const entry = l.li ? '• ' + t : t;
     if (seen[mode].has(entry)) continue; // Seiten mit doppeltem Inhalt (Mobil/Desktop)
     seen[mode].add(entry);
+    if (pending[mode]) { out[mode].push('', pending[mode]!); pending[mode] = null; }
     out[mode].push(entry);
   }
 

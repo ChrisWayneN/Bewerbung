@@ -21,6 +21,7 @@ import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeAshby } from './portals/ashby';
 import { extractInlineJson } from './inlineJson';
+import { isPlaceholderDescription } from './extract';
 
 export interface CompanyMeta {
   name: string;
@@ -224,10 +225,32 @@ async function scrapeSiemens(): Promise<JobInput[]> {
     job.hash = hashJob(job);
     out.push(job);
   });
+  // Fallback: Avature hat das Listen-Markup geändert, die Links gibt es aber noch.
+  // Die Facet-URL filtert bereits auf München, daher ohne Ort übernehmen.
   if (out.length === 0) {
-    console.log(`  [debug Siemens] 0 Treffer über Facet-URL – IDs evtl. rotiert, HTML-Länge: ${html.length}`);
+    const seen = new Set<string>();
+    $('a[href*="JobDetail"]').each((_, a) => {
+      const href = $(a).attr('href');
+      const title = $(a).text().trim().replace(/\s+/g, ' ');
+      if (!href || title.length < 6 || seen.has(href) || /share|teilen|apply|bewerben/i.test(title)) return;
+      seen.add(href);
+      const job: JobInput = { company: 'Siemens', title, location: 'München', url: new URL(href, SIEMENS_SEARCH_URL).toString(), source_portal: 'avature-html' };
+      job.hash = hashJob(job);
+      out.push(job);
+    });
+    if (out.length) console.log(`  [debug Siemens] Listen-Markup geändert – ${out.length} Stellen über JobDetail-Links übernommen (ohne Ortsangabe).`);
   }
-  return out.filter(j => isMunichArea(j.location));
+  const munich = out.filter(j => isMunichArea(j.location));
+  if (munich.length === 0) {
+    const pageTitle = $('title').first().text().trim().replace(/\s+/g, ' ');
+    const blocked = /captcha|access denied|forbidden|request blocked|cloudflare|are you a robot/i.test(html);
+    const cities = [...new Set(out.map(j => j.location))].slice(0, 8).join(' | ');
+    console.log(`  [debug Siemens] 0 Treffer. HTML ${html.length} Bytes, Seitentitel "${pageTitle}", `
+      + `${$('article').length} <article>, ${$('a[href*="JobDetail"]').length} JobDetail-Links, `
+      + `${out.length} Stellen vor München-Filter${cities ? ` (Orte: ${cities})` : ''}${blocked ? ' – Seite sieht nach Bot-Sperre aus!' : ''}`);
+    console.log(`  [debug Siemens] Abgefragte URL: ${url}`);
+  }
+  return munich;
 }
 
 /** Sammelt Beschreibungs-Texte aus einem KNDS-API-Eintrag (Feldnamen unbekannt,
@@ -239,11 +262,18 @@ function kndsDescription(item: Record<string, unknown>): string | null {
   const parts: string[] = [];
   const visit = (obj: Record<string, unknown>, depth: number) => {
     for (const [key, val] of Object.entries(obj)) {
+      if (Array.isArray(val) && depth < 2) {
+        // z.B. Abschnitts-Listen [{ title, content }, …]
+        for (const el of val) if (el && typeof el === 'object') visit(el as Record<string, unknown>, depth + 1);
+        continue;
+      }
       if (val && typeof val === 'object' && !Array.isArray(val) && depth < 2) {
         visit(val as Record<string, unknown>, depth + 1);
         continue;
       }
       if (typeof val !== 'string' || val.trim().length < 80) continue;
+      // Vorlagen-Platzhalter ("Lorem Impsum") – noch nicht befülltes Feld.
+      if (isPlaceholderDescription(`<h3>Aufgaben</h3><div>${val}</div>`)) continue;
       if (/url|link|href|image|logo/i.test(key)) continue;
       if (!/desc|content|text|body|task|aufgabe|respons|requirement|profil|qualif|skill|benefit|offer|angebot|intro/i.test(key)) continue;
       let heading = '';
@@ -257,7 +287,8 @@ function kndsDescription(item: Record<string, unknown>): string | null {
   return parts.length ? parts.join('\n') : null;
 }
 
-async function scrapeKNDS(): Promise<JobInput[]> {
+/** Alle Stellen aus der KNDS-Such-API (roh). Auch von scripts/inspect-knds.ts genutzt. */
+export async function fetchKndsItems(): Promise<{ data: Record<string, unknown>; items: Record<string, unknown>[] }> {
   // KNDS' Portal jobs.knds.de ist eine SPA auf recruiting-solutions.org
   // (Azure Cognitive Search Backend). Public-Key-Auth: der x-api-key ist
   // ein Frontend-Search-Key, kein Geheimnis – wird vom Browser an alle
@@ -292,6 +323,11 @@ async function scrapeKNDS(): Promise<JobInput[]> {
   if (!res.ok) throw new Error(`KNDS HTTP ${res.status}`);
   const data: Record<string, unknown> = await res.json();
   const items: Record<string, unknown>[] = ((data.value ?? data.results ?? data.items ?? data.jobs) as Record<string, unknown>[]) ?? [];
+  return { data, items };
+}
+
+async function scrapeKNDS(): Promise<JobInput[]> {
+  const { data, items } = await fetchKndsItems();
 
   const out: JobInput[] = [];
   const seen = new Set<string>();

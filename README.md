@@ -53,10 +53,14 @@ npm run enrich -- --force            # alle Seiten neu laden
 npm run enrich -- --report           # Diagnose: unvollständige Stellen + erkannte Überschriften
 npm run enrich -- --reextract        # gespeicherte Beschreibungen mit neuen Regeln neu zerlegen (offline)
 npm run clear-enrichment             # alle extrahierten Inhalte löschen
+npm run inspect-knds -- Leopard       # KNDS: alle API-Felder einer Stelle anzeigen (Diagnose)
 ```
 
 Stellen, die nicht mehr ausgeschrieben sind (404, „position has been filled“, nicht mehr in
 der Firmenliste), werden erkannt und übersprungen; Detailseite und Report nennen den Grund.
+
+Reine Vorlagen-Platzhalter („Lorem Ipsum“) zählen nicht als Beschreibung; `--reextract` setzt
+solche Stellen zurück, damit `npm run enrich` sie neu lädt.
 
 Ablauf bei „teilweise“: `--report` zeigt unbekannte Überschriften als `[?]` →
 Muster in `extract.ts` ergänzen → `--reextract` (lädt nichts nach).
