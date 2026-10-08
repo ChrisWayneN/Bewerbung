@@ -20,7 +20,7 @@ import { scrapeTypesense } from './portals/typesense';
 import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeAshby } from './portals/ashby';
-import { extractInlineJson } from './inlineJson';
+import { extractInlineJson, findJobArrays, pickString } from './inlineJson';
 import { kndsJobUrl } from '../lib/knds';
 
 export interface CompanyMeta {
@@ -37,7 +37,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'IABG',            careersUrl: 'https://jobboerse.iabg.de/engage/jobexchange/showJobOfferList.do?j=myjobexchange', portal: 'engage', status: '✅', note: 'jobboerse.iabg.de (Engage-Servlet) – Liste unter showJobOfferList.do, <tr class=joboffer>' },
   { name: 'Agile Robots SE', careersUrl: 'https://job-boards.eu.greenhouse.io/agilerobotsse/',   portal: 'greenhouse-html-eu', status: '✅', note: 'Seit 10/2026 Greenhouse-EU-Board (vorher Personio). Ganzes Board per ?page=N, München-Filter clientseitig über die Ortsangabe.' },
   { name: 'Hensoldt',        careersUrl: 'https://jobs.hensoldt.net/search/?optionsFacetsDD_country=DE&optionsFacetsDD_customfield2=Engineering&optionsFacetsDD_customfield1=Professionals', portal: 'sap-sf-search', status: '✅', note: 'SAP SuccessFactors, job-tile-DOM. Facetten: country=DE + Engineering (customfield2) + Professionals (customfield1); Standort clientseitig via isMunichArea (Fürstenfeldbruck/Taufkirchen/Ottobrunn). Filter anpassbar über customfield1/2.' },
-  { name: 'Diehl',           careersUrl: 'https://www.diehl.com/career/de/jobs-bewerbung',       portal: 'successfactors', status: '⚠️', note: 'Diehl Stiftung – Plattform unklar, HTML-Fallback' },
+  { name: 'Diehl',           careersUrl: 'https://new.diehl.com/career/de/jobs-bewerbung/stellenboerse/?o=date_desc&co=DE%3A%3AGilching%7CDE%3A%3AOttobrunn&p=1&c%5Bdc286%5D%5B%5D=305', portal: 'diehl-html', status: '⚠️', note: 'new.diehl.com (seit 10/2026). Server-Filter Standorte Gilching+Ottobrunn (co=) + Kategorie c[dc286][]=305, Blättern per p=N. Erkennung: Karten-DOM → eingebettete Daten → Links mit (m/w/d).' },
   { name: 'Siemens',         careersUrl: 'https://jobs.siemens.com/de_DE/externaljobs/SearchJobs/?42386=%5B812132%5D&42386_format=17546&42387=%5B813141%5D&42387_format=17547&42388=%5B912803%5D&42388_format=17879&42390=%5B102157%5D&42390_format=17550&43471=%5B811689%5D&43471_format=17871&42393=%5B811925%5D&42393_format=17552&listFilterMode=1', portal: 'avature-html',   status: '✅', note: 'Avature SSR-HTML. GET mit Facet-IDs (Germany/Bavaria/München + 3 Filter aus der Karriere-URL 10/2026), Blättern per folderOffset, plus isMunichArea()-Filter auf list-item-jobCity. IDs sind Avature-intern und können bei Siemens-Konfig-Änderung rotieren.' },
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995&locations=f5811cef9cb501a49eac0a694c0a8244&jobFamilyGroup=f5811cef9cb5018463377f3f550a1bf2&jobFamilyGroup=f5811cef9cb501e5d34e803f550a21f2', portal: 'workday', status: '✅', note: 'wd3, tenant=ag, site=Airbus. Server-seitige appliedFacets: München-Standort + 2 bewusst gewählte Job-Familien (nicht alle Kategorien).' },
@@ -563,62 +563,107 @@ async function scrapeIABG(): Promise<JobInput[]> {
   });
 }
 
+/** Diehl: Stellenbörse auf new.diehl.com (seit 10/2026). Filter wie in der vom
+ *  Nutzer gefilterten URL: Standorte Gilching + Ottobrunn (co=…) und Kategorie
+ *  c[dc286][]=305; Blättern per p=N. */
+const DIEHL_LISTING = 'https://new.diehl.com/career/de/jobs-bewerbung/stellenboerse/';
+const DIEHL_QUERY = 'o=date_desc&co=DE%3A%3AGilching%7CDE%3A%3AOttobrunn&c%5Bdc286%5D%5B%5D=305';
+const DIEHL_LOCATIONS = /gilching|ottobrunn/i;
+const GENDER_MARK = /\((?:[mwfdxi]\s*[/|,]\s*){1,3}[mwfdxi]\)|\(all genders?\)|\(gn\)/i;
+
 async function scrapeDiehl(): Promise<JobInput[]> {
-  // Diehl-spezifischer Selector basierend auf der bekannten DOM-Struktur:
-  //   <a class="distributor-link-item" href="...">
-  //     <h.. class="headline">Titel</h..>
-  //     <div class="item-header|item-footer|summary">... Standort ...</div>
-  //   </a>
-  // URL filtert server-seitig auf München + 25 km (deckt Ottobrunn, Gilching etc.).
-  const listingUrl = 'https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/?c=de&location=M%C3%BCnchen&radius=25&lat=48.1351253&lng=11.5819806';
-  const html = await fetchText(listingUrl);
-  const $ = cheerio.load(html);
   const out: JobInput[] = [];
   const seen = new Set<string>();
+  const methods = new Set<string>();
+  let total: number | null = null;
+  let pages = 0;
+  let html = '';
+  let $: cheerio.CheerioAPI | null = null;
 
-  // Primärselektor: die Card-Klasse, die wir aus den Computed Styles kennen.
-  let cards = $('a.distributor-link-item, .distributor-link-item a[href]');
-  // Fallback: falls Klasse umbenannt, suche nach typischen Job-href-Mustern.
-  if (cards.length === 0) {
-    cards = $('a[href*="/jobs-bewerbung/"], a[href*="/stellenboerse/"]');
-  }
-
-  cards.each((_, a) => {
-    const $a = $(a);
-    const href = $a.attr('href');
-    if (!href) return;
-    if (/^#|^javascript:/.test(href)) return;
-    const $card = $a.is('a.distributor-link-item') ? $a : $a.closest('.distributor-link-item, article, li');
-    const title = ($card.find('.headline, h2, h3, h4').first().text() || $a.text()).trim().replace(/\s+/g, ' ');
-    if (!title || title.length < 5) return;
-    const locationCtx = $card.find('.item-header, .item-footer, .summary, [class*="location"], [class*="standort"]').text().trim().replace(/\s+/g, ' ');
-    const url = href.startsWith('http') ? href : new URL(href, listingUrl).toString();
-    if (seen.has(url)) return;
+  const add = (href: string | null | undefined, title: string, cardText: string, method: string) => {
+    if (!href || /^(#|javascript:|mailto:)/i.test(href)) return false;
+    const url = new URL(href, DIEHL_LISTING).toString();
+    title = title.trim().replace(/\s+/g, ' ');
+    if (title.length < 5 || seen.has(url)) return false;
     seen.add(url);
-    // URL ist bereits Munich-gefiltert → assumeLocation
-    const job: JobInput = {
-      company: 'Diehl',
-      title,
-      location: locationCtx || 'München',
-      url,
-      source_portal: 'diehl-html',
-    };
+    methods.add(method);
+    // Server filtert bereits auf Gilching/Ottobrunn; Ort nur zur Anzeige.
+    const loc = cardText.match(/\b(Gilching|Ottobrunn)\b/i)?.[1];
+    const job: JobInput = { company: 'Diehl', title, location: loc ?? 'Ottobrunn / Gilching', url, source_portal: 'diehl-html' };
     job.hash = hashJob(job);
     out.push(job);
-  });
+    return true;
+  };
 
-  if (out.length === 0) {
-    console.log(`  [debug Diehl] 0 Treffer trotz neuer URL+Selector:`);
-    console.log(`    HTML ${html.length} bytes`);
-    console.log(`    a.distributor-link-item: ${$('a.distributor-link-item').length}`);
-    console.log(`    .distributor-link-item: ${$('.distributor-link-item').length}`);
-    console.log(`    a[href*="/jobs-bewerbung/"]: ${$('a[href*="/jobs-bewerbung/"]').length}`);
-    console.log(`    a[href*="/stellenboerse/"]: ${$('a[href*="/stellenboerse/"]').length}`);
-    const samples: string[] = [];
-    $('a[href]').each((_, a) => { if (samples.length < 8) samples.push($(a).attr('href') || ''); });
-    console.log(`    Erste 8 hrefs: ${samples.join(' | ')}`);
+  for (let p = 1; p <= 20; p++) {
+    html = await fetchText(`${DIEHL_LISTING}?${DIEHL_QUERY}&p=${p}`);
+    pages++;
+    $ = cheerio.load(html);
+    const $$ = $;
+    const before = out.length;
+
+    if (total === null) {
+      const m = $('body').text().replace(/\s+/g, ' ').match(/\b(\d{1,4})\s+(?:Stellen|Jobs|Ergebnisse|Treffer|Stellenangebote)\b/i);
+      if (m) total = Number(m[1]);
+    }
+
+    // 1. Bekannte Karten-Struktur (alte Diehl-Seite).
+    $('a.distributor-link-item, .distributor-link-item a[href]').each((_, a) => {
+      const $card = $$(a).is('.distributor-link-item') ? $$(a) : $$(a).closest('.distributor-link-item');
+      add($$(a).attr('href'), $card.find('.headline, h2, h3, h4').first().text() || $$(a).text(), $card.text(), 'karten');
+    });
+
+    // 2. Eingebettete Daten (JSON-LD JobPosting / SPA-State).
+    if (out.length === before) {
+      for (const hit of extractInlineJson(html)) {
+        for (const arr of findJobArrays(hit.data)) {
+          for (const j of arr.jobs) {
+            const title = pickString(j, ['title', 'name', 'jobTitle', 'positionTitle']);
+            const href = pickString(j, ['url', 'link', 'href', 'detailUrl', 'jobUrl', 'permalink']);
+            if (title && href) add(href, title, JSON.stringify(j).slice(0, 2000), `json:${hit.source}`);
+          }
+        }
+        const d = hit.data as Record<string, unknown>;
+        if (d && d['@type'] === 'JobPosting' && typeof d.title === 'string' && typeof d.url === 'string') {
+          add(d.url, d.title, JSON.stringify(d).slice(0, 2000), 'json-ld');
+        }
+      }
+    }
+
+    // 3. Generisch: Links mit Stellentitel ("… (m/w/d)") bzw. Überschrift, die
+    //    nicht bloß wieder auf die Listenseite (Filter/Blättern) zeigen.
+    if (out.length === before) {
+      $('a[href]').each((_, a) => {
+        const href = $$(a).attr('href')!;
+        let u: URL;
+        try { u = new URL(href, DIEHL_LISTING); } catch { return; }
+        if (!/diehl\.com$/i.test(u.hostname) || u.pathname === new URL(DIEHL_LISTING).pathname) return;
+        const heading = $$(a).find('h1, h2, h3, h4, h5, .headline, [class*="title" i]').first().text();
+        const title = (heading || $$(a).text()).trim().replace(/\s+/g, ' ');
+        if (title.length > 200 || !(GENDER_MARK.test(title) || (heading && /job|stelle|karriere|career/i.test(u.pathname)))) return;
+        const $card = $$(a).closest('li, article, [class*="item" i], [class*="card" i]');
+        add(href, title, ($card.length ? $card : $$(a)).text(), 'links');
+      });
+    }
+
+    if (out.length === before) break; // Seite ohne neue Stellen → Ende
+    if (total !== null && out.length >= total) break;
   }
 
+  const wrongPlace = out.filter(j => !DIEHL_LOCATIONS.test(j.location ?? '') && j.location !== 'Ottobrunn / Gilching').length;
+  console.log(`  [debug Diehl] ${pages} Seite(n), ${out.length} Stellen${total !== null ? ` (Seite meldet ${total})` : ''}, erkannt über: ${[...methods].join(', ') || '–'}${wrongPlace ? `, ${wrongPlace} mit anderem Ort` : ''}.`);
+  if (out.length === 0 && $) {
+    const $$ = $;
+    console.log(`  [debug Diehl] 0 Treffer. HTML ${html.length} Bytes, Seitentitel "${$('title').first().text().trim()}", ${$('a[href]').length} Links, ${$('script[src]').length} Skripte.`);
+    const samples: string[] = [];
+    $('a[href]').each((_, a) => {
+      const t = $$(a).text().trim().replace(/\s+/g, ' ');
+      if (samples.length < 15 && t.length > 15) samples.push(`${t.slice(0, 60)} → ${$$(a).attr('href')}`);
+    });
+    console.log(`  [debug Diehl] Links mit Text:\n    ${samples.join('\n    ')}`);
+    const apis = [...new Set(html.match(/["'](\/[^"'\s]*(?:api|ajax|search|jobs?)[^"'\s]*)["']/gi) ?? [])].slice(0, 10);
+    if (apis.length) console.log(`  [debug Diehl] API-Hinweise im HTML: ${apis.join(' ')}`);
+  }
   return out;
 }
 
