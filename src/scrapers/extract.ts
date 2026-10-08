@@ -51,6 +51,8 @@ const QUAL_PATTERNS: RegExp[] = [
   /\bwhat you need\b/, /\byou('|’)?ll need\b/, /\bwas du kannst\b/, /\bwas sie koennen\b/,
   /\bboarding pass\b/, // Airbus: "Your boarding pass"
   /\bapply if you\b/,  // Helsing: "You should apply if you"
+  // RobCo: "We're looking for someone who has:" – nur am Zeilenanfang, sonst trifft es Fließtext.
+  /^(we('|’)?re|we are) (also )?looking for (someone|somebody|a person|people|candidates?|you)\b/,
 ];
 const QUAL_PATTERNS_STRONG: RegExp[] = [
   /\bskills\b/, /\bkenntnisse\b/, /\bkompetenzen\b/, /\berfahrung(en)?\b/,
