@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { fetchText, fetchJson } from './base';
 import { extractSections, sanitizeHtml, looksLikeClosedPosting, type ExtractedSections } from './extract';
+import { fetchAshbyPostings, type AshbyPosting } from './portals/ashby';
 import {
   getJobsToEnrich, saveEnrichment, markEnrichFailed, markEnrichClosed, getEnrichSkipCounts,
   MAX_ENRICH_ATTEMPTS, type EnrichTarget,
@@ -97,6 +98,15 @@ async function fetchCandidates(job: EnrichTarget): Promise<{ cands: Candidate[];
     return { cands, closed: false };
   }
 
+  // Ashby (z.B. RobCo): die Stellenseite ist eine reine JS-App – Beschreibung
+  // stattdessen aus der öffentlichen Posting-API des Boards (einmal pro Lauf geladen).
+  const ashby = job.url.match(/jobs\.ashbyhq\.com\/([^/?#]+)\/([0-9a-f-]{36})/i);
+  if (ashby) {
+    const posting = (await ashbyBoardCached(ashby[1])).find(p => p.id === ashby[2]);
+    if (!posting) throw new ClosedPostingError(`Stelle ${ashby[2]} nicht mehr im Ashby-Board`);
+    return { cands: posting.descriptionHtml ? [{ source: 'ashby-api', content: posting.descriptionHtml }] : [], closed: false };
+  }
+
   // Rohde & Schwarz: unsere URL ist die Ergebnisliste mit Sprungmarke #job-<id>.
   const rs = job.url.match(/^([^#]*karriere-stellenangebote_251573\.html[^#]*)#job-([\w-]+)$/);
   if (rs) return { cands: await rohdeCandidates(rs[1], rs[2]), closed: false };
@@ -134,6 +144,12 @@ let pageCache = new Map<string, Promise<string>>();
 function fetchCached(url: string): Promise<string> {
   if (!pageCache.has(url)) pageCache.set(url, fetchText(url));
   return pageCache.get(url)!;
+}
+
+let ashbyCache = new Map<string, Promise<AshbyPosting[]>>();
+function ashbyBoardCached(board: string): Promise<AshbyPosting[]> {
+  if (!ashbyCache.has(board)) ashbyCache.set(board, fetchAshbyPostings(board));
+  return ashbyCache.get(board)!;
 }
 
 /** Rohde & Schwarz: Stelle als Accordion-Eintrag in der (per &offset= nachgeladenen)
@@ -255,6 +271,7 @@ export interface EnrichOptions {
 export async function enrichJobs(opts: EnrichOptions = {}) {
   const log = opts.log ?? console.log;
   pageCache = new Map();
+  ashbyCache = new Map();
   const jobs = getJobsToEnrich({ only: opts.only, force: opts.force, limit: opts.limit });
   const skip = getEnrichSkipCounts();
   const skipInfo = [

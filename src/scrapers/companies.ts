@@ -19,6 +19,7 @@ import { scrapeTalentsConnect } from './portals/talentsconnect';
 import { scrapeTypesense } from './portals/typesense';
 import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
+import { scrapeAshby } from './portals/ashby';
 import { extractInlineJson } from './inlineJson';
 
 export interface CompanyMeta {
@@ -44,6 +45,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
   { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
   { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-html-eu', status: '✅', note: 'Greenhouse-Job-Board (job-boards.eu.greenhouse.io), SSR-HTML mit Pagination ?page=N und Server-Filter ?offices[]=4008032101. Die klassische boards-api kennt das Board nicht.' },
+  { name: 'RobCo',           careersUrl: 'https://www.rob.co/de/karriere?ashby_department_id=a61b8758-b437-4773-9761-865d93cd8921&ashby_location_id=abeb7da6-c990-4487-9710-a18923250a7f#open-positions', portal: 'ashby', status: '✅', note: 'Ashby-Job-Board (Embed auf rob.co). Filter wie auf der Karriereseite: Abteilung Engineering (ashby_department_id, inkl. Unter-Teams) + Standort München (ashby_location_id) über das Board-GraphQL; Beschreibungen aus der Ashby-Posting-API.' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -863,6 +865,18 @@ async function scrapeIsarAerospace(): Promise<JobInput[]> {
   return scrapeGreenhouseEuBoard({ company: 'Isar Aerospace', board: 'isaraerospace', query: 'offices%5B%5D=4008032101' });
 }
 
+async function scrapeRobCo(): Promise<JobInput[]> {
+  // IDs aus der Karriere-URL (Filter Engineering / München).
+  return scrapeAshby({
+    company: 'RobCo',
+    careersPage: 'https://www.rob.co/de/karriere',
+    boards: ['robco', 'rob.co', 'RobCo'],
+    departmentId: 'a61b8758-b437-4773-9761-865d93cd8921',
+    locationId: 'abeb7da6-c990-4487-9710-a18923250a7f',
+    departmentName: /engineering/i,
+  });
+}
+
 /* ---------------- Public registry ---------------- */
 
 export const scrapers: Scraper[] = [
@@ -880,6 +894,7 @@ export const scrapers: Scraper[] = [
   { company: 'MTU',             run: wrap('MTU',             scrapeMTU) },
   { company: 'Helsing',         run: wrap('Helsing',         scrapeHelsing) },
   { company: 'Isar Aerospace',  run: wrap('Isar Aerospace',  scrapeIsarAerospace) },
+  { company: 'RobCo',           run: wrap('RobCo',           scrapeRobCo) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {

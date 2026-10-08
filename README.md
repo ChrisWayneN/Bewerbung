@@ -108,6 +108,7 @@ src/
     ├── companies.ts                 # 21 Module + Registry
     ├── runAll.ts                    # Orchestrator
     └── portals/
+        ├── ashby.ts                 # Ashby Job-Board (GraphQL + Posting-API)
         ├── workday.ts               # Workday CXS JSON
         ├── personio.ts              # Personio XML-Feed
         └── successfactors.ts        # SAP SF HTML-Parser
@@ -125,6 +126,7 @@ scripts/scrape.ts                    # CLI
 | ✅ | Hensoldt | Workday | `hensoldt.wd3.myworkdayjobs.com/External_Career_Site` |
 | ✅ | Agile Robots SE | Personio | `agile-robots-se.jobs.personio.de` |
 | ✅ | Franka Robotics | Personio | `franka-robotics.jobs.personio.de` |
+| ✅ | RobCo | Ashby | `jobs.ashbyhq.com/robco` – Filter Engineering + München per Abteilungs-/Standort-ID aus der rob.co-Karriere-URL |
 | ✅ | Siemens | Phenom People | `jobs.siemens.com/api/jobs` |
 | ✅ | IABG | Engage-Servlet | `jobboerse.iabg.de/engage/jobexchange/` (HQ Ottobrunn) |
 | ✅ | KNDS | SAP SF CSB | `jobs.knds.de/content/search/` |
