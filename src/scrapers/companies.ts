@@ -21,7 +21,7 @@ import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeAshby } from './portals/ashby';
 import { extractInlineJson } from './inlineJson';
-import { isPlaceholderDescription } from './extract';
+import { kndsJobUrl } from '../lib/knds';
 
 export interface CompanyMeta {
   name: string;
@@ -272,8 +272,6 @@ function kndsDescription(item: Record<string, unknown>): string | null {
         continue;
       }
       if (typeof val !== 'string' || val.trim().length < 80) continue;
-      // Vorlagen-Platzhalter ("Lorem Impsum") – noch nicht befülltes Feld.
-      if (isPlaceholderDescription(`<h3>Aufgaben</h3><div>${val}</div>`)) continue;
       if (/url|link|href|image|logo/i.test(key)) continue;
       if (!/desc|content|text|body|task|aufgabe|respons|requirement|profil|qualif|skill|benefit|offer|angebot|intro/i.test(key)) continue;
       let heading = '';
@@ -347,8 +345,12 @@ async function scrapeKNDS(): Promise<JobInput[]> {
 
     const id = it.id ?? it.jobId ?? it.requisitionId ?? it.externalId;
     let url: string;
-    const navigateLink = (it.url ?? it.applyUrl ?? it.detailUrl ?? it.navigateLink ?? it.permalink) as string | undefined;
-    if (typeof navigateLink === 'string' && navigateLink.length > 0) {
+    // applyUrl ist die SAP-Bewerbungsmaske (Login) – die Anzeige selbst liegt auf
+    // jobs.knds.de/job-invite/<jobId>/ (= Feld jobLink).
+    const navigateLink = (it.url ?? it.detailUrl ?? it.navigateLink ?? it.permalink ?? it.applyUrl) as string | undefined;
+    if (it.jobId != null) {
+      url = kndsJobUrl(String(it.jobId), typeof it.language === 'string' ? it.language : 'de_DE');
+    } else if (typeof navigateLink === 'string' && navigateLink.length > 0) {
       url = navigateLink.startsWith('http') ? navigateLink : new URL(navigateLink, 'https://jobs.knds.de').toString();
     } else if (id != null) {
       url = `https://jobs.knds.de/content/job/${id}/`;

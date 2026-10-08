@@ -15,7 +15,7 @@
  */
 import { enrichJobs } from '../src/scrapers/enrich';
 import { explainHeadings, extractSections, looksLikeClosedPosting, isPlaceholderDescription } from '../src/scrapers/extract';
-import { getIncompleteEnrichments, getStoredDescriptions, updateSections, markEnrichClosed, resetEnrichment } from '../src/lib/db';
+import { getIncompleteEnrichments, getStoredDescriptions, updateSections, markEnrichClosed, clearSections, NOTE_PLACEHOLDER } from '../src/lib/db';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -46,8 +46,7 @@ function reextract(only?: string[]) {
   let changed = 0, improved = 0, closed = 0, placeholders = 0;
   for (const r of rows) {
     if (isPlaceholderDescription(r.description_raw)) {
-      resetEnrichment(r.id);
-      placeholders++;
+      if (r.tasks || r.qualifications) { clearSections(r.id, NOTE_PLACEHOLDER); placeholders++; }
       continue;
     }
     const s = extractSections(r.description_raw);
@@ -64,7 +63,7 @@ function reextract(only?: string[]) {
     if (after > score(r.tasks, r.qualifications)) improved++;
   }
   console.log(`${rows.length} gespeicherte Beschreibungen neu zerlegt: ${changed} geändert, davon ${improved} mit mehr gefundenen Abschnitten.`);
-  if (placeholders) console.log(`${placeholders} gespeicherte Beschreibungen enthielten nur Platzhalter ("Lorem Ipsum") – zurückgesetzt, werden beim nächsten "npm run enrich" neu geladen.`);
+  if (placeholders) console.log(`${placeholders} Stellen enthalten nur Platzhaltertext ("Lorem Ipsum") – Abschnitte geleert; sobald die Firma die Anzeige befüllt, holt der nächste Scrape sie.`);
   if (closed) console.log(`${closed} gespeicherte "Beschreibungen" waren Hinweisseiten (Stelle nicht mehr ausgeschrieben) – entfernt.`);
 }
 

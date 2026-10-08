@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { kndsUrlFromLegacy } from './knds';
 
 const DB_PATH = process.env.JOBS_DB_PATH || resolve(process.cwd(), 'db', 'jobs.db');
 const SCHEMA_PATH = resolve(process.cwd(), 'db', 'schema.sql');
@@ -66,8 +67,27 @@ export function getDb(): Database.Database {
       WHERE status IS NOT NULL AND status != ''
     `);
   }
+  migrateKndsUrls(db);
   _db = db;
   return db;
+}
+
+/** KNDS-Links von der SAP-Login-Seite auf die echte Anzeige umstellen – samt
+ *  Ausblenden/Bewertung/Status, die an der URL hängen. Idempotent. */
+function migrateKndsUrls(db: Database.Database): void {
+  const tables = ['jobs', 'hidden_urls', 'rated_urls', 'status_urls'];
+  const legacy = tables.flatMap(t =>
+    (db.prepare(`SELECT url FROM ${t} WHERE url LIKE 'https://career55.sapsf.eu/career?%kraussma01%'`).all() as { url: string }[])
+      .map(r => ({ t, url: r.url })));
+  if (!legacy.length) return;
+  db.transaction(() => {
+    for (const { t, url } of legacy) {
+      const next = kndsUrlFromLegacy(url);
+      // OR IGNORE: existiert die neue URL schon, bleibt der alte Eintrag stehen
+      // (wird dann wie jede verschwundene Stelle behandelt) – nichts geht verloren.
+      if (next) db.prepare(`UPDATE OR IGNORE ${t} SET url = ? WHERE url = ?`).run(next, url);
+    }
+  })();
 }
 
 export interface JobRow {
@@ -132,6 +152,10 @@ export function upsertJobs(jobs: JobInput[]): UpsertResult {
   const update = db.prepare(`
     UPDATE jobs SET title=@title, location=@location, source_portal=@source_portal,
       description_raw=COALESCE(@description_raw, description_raw),
+      -- Beschreibung hat sich geändert und es gibt noch keine Aufgaben/Profil
+      -- (z.B. Anzeige war erst nur Platzhalter): Anreicherung neu versuchen.
+      enrich_attempts=CASE WHEN @description_raw IS NOT NULL AND description_raw IS NOT @description_raw
+        AND tasks IS NULL AND qualifications IS NULL THEN 0 ELSE enrich_attempts END,
       tasks=COALESCE(@tasks, tasks),
       qualifications=COALESCE(@qualifications, qualifications),
       last_seen=@last_seen, hash=@hash
@@ -676,14 +700,14 @@ export function getStoredDescriptions(): { id: number; company: string; descript
   `).all() as { id: number; company: string; description_raw: string; tasks: string | null; qualifications: string | null }[];
 }
 
-/** Gespeicherte Beschreibung war unbrauchbar (z.B. nur Vorlagen-Platzhalter):
- *  alles verwerfen, damit die nächste Anreicherung die Stelle neu lädt. */
-export function resetEnrichment(id: number): void {
-  getDb().prepare(`
-    UPDATE jobs SET description_raw = NULL, tasks = NULL, qualifications = NULL,
-      enriched_at = NULL, enrich_attempts = 0, enrich_note = NULL
-    WHERE id = ?
-  `).run(id);
+/** Gespeicherte Abschnitte waren unbrauchbar (z.B. nur Vorlagen-Platzhalter):
+ *  verwerfen und den Grund vermerken. Die Beschreibung bleibt; ändert die Firma
+ *  sie später, versucht der nächste Scrape die Anreicherung erneut. */
+export const NOTE_PLACEHOLDER = 'Anzeige enthält nur Platzhaltertext („Lorem Ipsum“) – von der Firma noch nicht befüllt';
+
+export function clearSections(id: number, note: string): void {
+  getDb().prepare('UPDATE jobs SET tasks = NULL, qualifications = NULL, enriched_at = NULL, enrich_note = ? WHERE id = ?')
+    .run(note, id);
 }
 
 export function updateSections(id: number, tasks: string | null, qualifications: string | null): void {

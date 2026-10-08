@@ -1,10 +1,10 @@
 import * as cheerio from 'cheerio';
 import { fetchText, fetchJson } from './base';
-import { extractSections, sanitizeHtml, looksLikeClosedPosting, type ExtractedSections } from './extract';
+import { extractSections, sanitizeHtml, looksLikeClosedPosting, isPlaceholderDescription, type ExtractedSections } from './extract';
 import { fetchAshbyPostings, type AshbyPosting } from './portals/ashby';
 import {
   getJobsToEnrich, saveEnrichment, markEnrichFailed, markEnrichClosed, getEnrichSkipCounts,
-  MAX_ENRICH_ATTEMPTS, type EnrichTarget,
+  MAX_ENRICH_ATTEMPTS, NOTE_PLACEHOLDER, type EnrichTarget,
 } from '../lib/db';
 
 /**
@@ -106,6 +106,10 @@ async function fetchCandidates(job: EnrichTarget): Promise<{ cands: Candidate[];
     if (!posting) throw new ClosedPostingError(`Stelle ${ashby[2]} nicht mehr im Ashby-Board`);
     return { cands: posting.descriptionHtml ? [{ source: 'ashby-api', content: posting.descriptionHtml }] : [], closed: false };
   }
+
+  // KNDS: jobs.knds.de ist eine reine JS-App, der Text kommt vollständig aus
+  // der Such-API und liegt schon als description_raw vor. Seite nicht laden.
+  if (/^https:\/\/jobs\.knds\.de\//.test(job.url)) return { cands: [], closed: false };
 
   // Rohde & Schwarz: unsere URL ist die Ergebnisliste mit Sprungmarke #job-<id>.
   const rs = job.url.match(/^([^#]*karriere-stellenangebote_251573\.html[^#]*)#job-([\w-]+)$/);
@@ -252,7 +256,9 @@ async function enrichOne(job: EnrichTarget): Promise<{ outcome: Outcome; error?:
     : null;
 
   if (!best || score(best.sections) === 0) {
-    markEnrichFailed(job.id, raw, 'Seite geladen, aber keine Aufgaben/Profil-Überschriften erkannt');
+    markEnrichFailed(job.id, raw, isPlaceholderDescription(job.description_raw)
+      ? NOTE_PLACEHOLDER
+      : 'Seite geladen, aber keine Aufgaben/Profil-Überschriften erkannt');
     return { outcome: 'nichts' };
   }
   saveEnrichment(job.id, { description_raw: raw, ...best.sections });

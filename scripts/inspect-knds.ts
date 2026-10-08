@@ -38,7 +38,7 @@ function dump(val: unknown, path: string, depth = 0) {
   for (const it of hits.slice(0, 3)) {
     console.log(`==== ${String(it.title ?? it.jobTitle ?? it.name)} ====`);
     dump(it, '');
-    const link = (it.url ?? it.applyUrl ?? it.detailUrl ?? it.navigateLink ?? it.permalink) as string | undefined;
+    const link = (it.jobLink ?? it.link ?? it.applyUrl) as string | undefined;
     if (link) {
       const url = link.startsWith('http') ? link : new URL(link, 'https://jobs.knds.de').toString();
       try {
