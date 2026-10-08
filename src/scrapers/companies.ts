@@ -575,7 +575,6 @@ async function scrapeDiehl(): Promise<JobInput[]> {
   const out: JobInput[] = [];
   const seen = new Set<string>();
   const methods = new Set<string>();
-  let total: number | null = null;
   let pages = 0;
   let html = '';
   let $: cheerio.CheerioAPI | null = null;
@@ -601,11 +600,6 @@ async function scrapeDiehl(): Promise<JobInput[]> {
     $ = cheerio.load(html);
     const $$ = $;
     const before = out.length;
-
-    if (total === null) {
-      const m = $('body').text().replace(/\s+/g, ' ').match(/\b(\d{1,4})\s+(?:Stellen|Jobs|Ergebnisse|Treffer|Stellenangebote)\b/i);
-      if (m) total = Number(m[1]);
-    }
 
     // 1. Bekannte Karten-Struktur (alte Diehl-Seite).
     $('a.distributor-link-item, .distributor-link-item a[href]').each((_, a) => {
@@ -646,12 +640,13 @@ async function scrapeDiehl(): Promise<JobInput[]> {
       });
     }
 
-    if (out.length === before) break; // Seite ohne neue Stellen → Ende
-    if (total !== null && out.length >= total) break;
+    // Seite ohne neue Stellen → Ende. (Eine Trefferzahl wird bewusst nicht
+    // gelesen: die Seite nennt auch andere Zahlen, z.B. alle Diehl-Stellen.)
+    if (out.length === before) break;
   }
 
   const wrongPlace = out.filter(j => !DIEHL_LOCATIONS.test(j.location ?? '') && j.location !== 'Ottobrunn / Gilching').length;
-  console.log(`  [debug Diehl] ${pages} Seite(n), ${out.length} Stellen${total !== null ? ` (Seite meldet ${total})` : ''}, erkannt über: ${[...methods].join(', ') || '–'}${wrongPlace ? `, ${wrongPlace} mit anderem Ort` : ''}.`);
+  console.log(`  [debug Diehl] ${pages} Seite(n), ${out.length} Stellen, erkannt über: ${[...methods].join(', ') || '–'}${wrongPlace ? `, ${wrongPlace} mit anderem Ort` : ''}.`);
   if (out.length === 0 && $) {
     const $$ = $;
     console.log(`  [debug Diehl] 0 Treffer. HTML ${html.length} Bytes, Seitentitel "${$('title').first().text().trim()}", ${$('a[href]').length} Links, ${$('script[src]').length} Skripte.`);
