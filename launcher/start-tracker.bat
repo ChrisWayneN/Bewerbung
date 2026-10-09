@@ -5,7 +5,8 @@ REM  Doppelklick startet den lokalen Web-Server und oeffnet den
 REM  Browser auf http://localhost:3000
 REM  Zum Beenden das separate Server-Fenster schliessen.
 REM ============================================================
-cd /d "%~dp0"
+REM Liegt in launcher\ - Projektordner ist eine Ebene hoeher.
+cd /d "%~dp0.."
 
 REM -- Abhaengigkeiten pruefen (nur beim allerersten Start noetig) --
 if not exist "node_modules" (

@@ -5,7 +5,8 @@ REM  Doppelklick holt neue Stellen von allen Portalen und
 REM  schreibt sie in die Datenbank. Braucht Internet.
 REM  Danach im Tracker (localhost:3000) neu laden.
 REM ============================================================
-cd /d "%~dp0"
+REM Liegt in launcher\ - Projektordner ist eine Ebene hoeher.
+cd /d "%~dp0.."
 
 if not exist "node_modules" (
     echo Erste Einrichtung: installiere Abhaengigkeiten...

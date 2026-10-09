@@ -8,7 +8,7 @@
  * serverseitig gefiltert werden kann.
  *
  *   npm run inspect-siemens
- *   npm run inspect-siemens > siemens-debug.txt    (in Datei umleiten)
+ *   npm run inspect-siemens > debug\siemens-debug.txt    (in Datei umleiten)
  */
 import { fetchText } from '../src/scrapers/base';
 

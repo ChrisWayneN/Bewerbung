@@ -10,7 +10,7 @@
  *   4. Pro Seite: wie viele Tiles, wie viele davon München-Area (Paginierungs-Test)
  *
  *   npm run inspect-hensoldt
- *   npm run inspect-hensoldt > hensoldt-debug.txt
+ *   npm run inspect-hensoldt > debug\hensoldt-debug.txt
  */
 import * as cheerio from 'cheerio';
 import { fetchText, isMunichArea } from '../src/scrapers/base';

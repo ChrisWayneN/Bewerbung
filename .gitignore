@@ -15,3 +15,8 @@ test-results
 db/jobs.db-shm
 db/jobs.db-wal
 src/config/scraper-secrets.json
+
+# Diagnose-Ausgaben und lokal angelegte Verknuepfungen
+debug/*
+!debug/LIESMICH.txt
+*.lnk

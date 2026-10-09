@@ -6,7 +6,7 @@
  * Typesense-URL noch im Frontend steht.
  *
  *   npm run inspect-neura
- *   npm run inspect-neura > neura-debug.txt    (in Datei umleiten)
+ *   npm run inspect-neura > debug\neura-debug.txt    (in Datei umleiten)
  */
 import { fetchText } from '../src/scrapers/base';
 

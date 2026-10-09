@@ -1,0 +1,3 @@
+Ablage fuer Diagnose-Ausgaben, z.B.
+  npm run inspect-knds -- Leopard > debug\knds-debug.txt
+Der Inhalt dieses Ordners wird nicht ins Git uebernommen.

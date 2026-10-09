@@ -6,7 +6,7 @@
  * steht, wenn die Detailansicht nur "Lorem Impsum" zeigt.
  *
  *   npm run inspect-knds -- Leopard
- *   npm run inspect-knds -- Leopard > knds-debug.txt    (in Datei umleiten)
+ *   npm run inspect-knds -- Leopard > debug\knds-debug.txt    (in Datei umleiten)
  */
 import { fetchKndsItems } from '../src/scrapers/companies';
 import { fetchText } from '../src/scrapers/base';

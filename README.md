@@ -1,4 +1,4 @@
-# Bewerbung – Job Tracker München
+# Job-Scraper München
 
 Job-Tracking-Tool für 21 Firmen im Großraum München (30-km-Radius).
 
@@ -14,8 +14,11 @@ Job-Tracking-Tool für 21 Firmen im Großraum München (30-km-Radius).
 ### Variante A – Doppelklick (Windows)
 
 1. [Node.js LTS](https://nodejs.org) installieren (einmalig).
-2. **`start.bat` doppelklicken** – installiert beim ersten Lauf alles, scrapt, öffnet den Browser.
-3. Später: `update.bat` doppelklicken für neuen Job-Import.
+2. **`launcher\verknuepfungen-erstellen.bat` doppelklicken** (einmalig) – legt
+   „Job Tracker München“ und „Jobs scrapen“ mit Logo im Projektordner und auf dem
+   Desktop an. Nach dem Verschieben des Projektordners erneut ausführen.
+3. **„Job Tracker München“** startet den lokalen Server und öffnet den Browser.
+   **„Jobs scrapen“** holt neue Stellen (danach im Browser neu laden).
 
 ### Variante B – Kommandozeile
 
@@ -96,6 +99,20 @@ rm db/jobs.db && npm run scrape
 | `/jobs/status` | Scraper-Status pro Firma (✅ / ⚠️ / ❌) |
 | `/api/jobs` | JSON: alle Stellen |
 | `/api/jobs/[id]/hide` | POST: Hide-Toggle |
+
+## Ordner im Projekt
+
+| Ordner/Datei | Inhalt |
+|---|---|
+| `launcher/` | Doppelklick-Starter (`start-tracker.bat`, `scrape-jobs.bat`), Logo und Skript für die Verknüpfungen |
+| `src/` | Quellcode: Web-Oberfläche (`src/app`), Datenbank-Zugriff (`src/lib`), Scraper je Firma (`src/scrapers`), Blacklist (`src/config`) |
+| `scripts/` | Kommandozeilen-Befehle hinter `npm run …` (scrape, enrich, inspect-…) |
+| `db/` | Datenbank `jobs.db` mit allen Stellen, Status und Bewertungen + Tabellen-Definition `schema.sql` |
+| `debug/` | Ablage für Diagnose-Ausgaben (wird nicht ins Git übernommen) |
+| `node_modules/` | Installierte Bibliotheken (von `npm install`, nie von Hand ändern) |
+| `.next/` | Zwischenspeicher des Web-Servers (wird automatisch erzeugt, darf gelöscht werden) |
+| `package.json`, `package-lock.json` | Projektname, `npm run`-Befehle, Bibliotheken mit Versionen |
+| `tsconfig.json`, `next.config.mjs`, `tailwind.config.ts`, `postcss.config.mjs`, `next-env.d.ts` | Einstellungen für TypeScript, Next.js und das Styling – müssen im Hauptordner liegen, dort suchen die Werkzeuge sie |
 
 ## Architektur
 
