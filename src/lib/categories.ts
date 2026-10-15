@@ -3,7 +3,7 @@
  *  übersetzt das zu company IN (...). */
 export const COMPANY_CATEGORIES: Record<string, string[]> = {
   'Rüstung':           ['Hensoldt', 'IABG', 'Helsing', 'Quantum Systems', 'Diehl', 'KNDS'],
-  'Robotik':           ['Agile Robots SE', 'Neura Robotics', 'Franka Robotics', 'RobCo'],
+  'Robotik':           ['Agile Robots SE', 'Neura Robotics', 'Franka Robotics', 'RobCo', 'MicroAGI'],
   'Luft- und Raumfahrt': ['Airbus', 'MTU', 'Isar Aerospace'],
   'Mixed':             ['Siemens', 'Rohde & Schwarz'],
 };

@@ -47,6 +47,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
   { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-html-eu', status: '✅', note: 'Greenhouse-Job-Board (job-boards.eu.greenhouse.io), SSR-HTML mit Pagination ?page=N und Server-Filter ?offices[]=4008032101. Die klassische boards-api kennt das Board nicht.' },
   { name: 'RobCo',           careersUrl: 'https://www.rob.co/de/karriere?ashby_department_id=a61b8758-b437-4773-9761-865d93cd8921&ashby_location_id=abeb7da6-c990-4487-9710-a18923250a7f#open-positions', portal: 'ashby', status: '✅', note: 'Ashby-Job-Board (Embed auf rob.co). Filter wie auf der Karriereseite: Abteilung Engineering (ashby_department_id, inkl. Unter-Teams) + Standort München (ashby_location_id) über das Board-GraphQL; Beschreibungen aus der Ashby-Posting-API.' },
+  { name: 'MicroAGI',        careersUrl: 'https://www.microagi.ai/careers',                     portal: 'microagi-html',  status: '⚠️', note: 'Eigene Website ohne Filter/Portal. Alle Links /careers/<slug> einsammeln, jede Stellenseite laden; München-Filter über die Ortszeile (z.B. "Zürich or Munich"). Initiativbewerbung wird übersprungen.' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -973,6 +974,87 @@ async function scrapeIsarAerospace(): Promise<JobInput[]> {
   return scrapeGreenhouseEuBoard({ company: 'Isar Aerospace', board: 'isaraerospace', query: 'offices%5B%5D=4008032101' });
 }
 
+/** MicroAGI: eigene Website ohne Filter und ohne Bewerbungsportal. Jede Stelle
+ *  hat eine Unterseite /careers/<slug>; die Liste wird ganz geladen und über den
+ *  Ort (Karte oder Kopf der Stellenseite, z.B. "Zürich or Munich") gefiltert. */
+const MICROAGI_CAREERS = 'https://www.microagi.ai/careers';
+const MICROAGI_SLUG = /(?:https?:\/\/(?:www\.)?microagi\.ai)?\/careers\/([a-z0-9][a-z0-9-]*)(?=[/?#"'\\\s]|$)/gi;
+const CITY_RE = /m(?:ü|ue|u)nchen|munich|z(?:ü|ue|u)rich|new york|nyc|aachen|berlin|london|san francisco|paris|remote/i;
+const UNSOLICITED_RE = /unsolicited|initiativ|open application|general application/i;
+
+/** Kurze Ortszeile (z.B. "Zürich or Munich · Full-time") aus einem HTML-Stück. */
+function microagiLocationLine($: cheerio.CheerioAPI): string | null {
+  // 1. JSON-LD JobPosting.jobLocation
+  for (const hit of extractInlineJson($.html())) {
+    const d = hit.data as Record<string, any>;
+    if (d?.['@type'] !== 'JobPosting' || !d.jobLocation) continue;
+    const locs = (Array.isArray(d.jobLocation) ? d.jobLocation : [d.jobLocation])
+      .map((l: any) => l?.address?.addressLocality ?? l?.name)
+      .filter((l: unknown): l is string => typeof l === 'string' && !!l.trim());
+    if (locs.length) return locs.join(' / ');
+  }
+  // 2. Erstes kurzes Element mit Ortsnamen – auf der Stellenseite erst nach dem <h1>,
+  //    damit Navigation/Firmentext ("Büros in Munich und Zürich") nicht greift.
+  const els = $('body *').toArray().filter(el => !$(el).closest('nav, footer, header, script, style').length);
+  const start = Math.max(0, els.findIndex(el => (el as any).tagName === 'h1'));
+  for (const el of els.slice(start)) {
+    const t = $(el).text().replace(/\s+/g, ' ').trim();
+    if (t.length && t.length < 120 && CITY_RE.test(t) && !$(el).children().toArray().some(c => CITY_RE.test($(c).text()) && $(c).text().trim().length < t.length)) return t;
+  }
+  return null;
+}
+
+async function scrapeMicroAgi(): Promise<JobInput[]> {
+  const html = await fetchText(MICROAGI_CAREERS);
+  const $ = cheerio.load(html);
+
+  // Stellen-Links: echte <a> (mit Kartentext) + alle /careers/<slug> im Rohtext
+  // (falls die Liste erst per JS gerendert wird und nur im eingebetteten State steht).
+  const cards = new Map<string, string>();
+  $('a[href]').each((_, a) => {
+    const href = $(a).attr('href')!;
+    let u: URL;
+    try { u = new URL(href, MICROAGI_CAREERS); } catch { return; }
+    const m = /^\/careers\/([a-z0-9][a-z0-9-]*)\/?$/i.exec(u.pathname);
+    if (!/microagi\.ai$/i.test(u.hostname) || !m) return;
+    const $card = $(a).text().trim().length > 15 ? $(a) : $(a).closest('li, article, [class*="card" i], [class*="item" i], [class*="role" i], [class*="job" i]');
+    cards.set(m[1].toLowerCase(), ($card.length ? $card : $(a)).text().replace(/\s+/g, ' ').trim());
+  });
+  for (const m of html.matchAll(MICROAGI_SLUG)) if (!cards.has(m[1].toLowerCase())) cards.set(m[1].toLowerCase(), '');
+
+  const out: JobInput[] = [];
+  const skipped: string[] = [];
+  for (const [slug, cardText] of cards) {
+    const url = `${MICROAGI_CAREERS}/${slug}`;
+    let title = '';
+    let location = cardText && cardText.length < 400 && CITY_RE.test(cardText) ? cardText : null;
+    try {
+      const $d = cheerio.load(await fetchText(url));
+      title = $d('h1').first().text().replace(/\s+/g, ' ').trim()
+        || ($d('meta[property="og:title"]').attr('content') ?? $d('title').first().text()).replace(/\s*[·|–-]\s*micro\s*agi\s*$/i, '').trim();
+      const pageLoc = microagiLocationLine($d);
+      if (pageLoc) location = pageLoc;
+    } catch (e) {
+      // Stellenseite nicht ladbar → mit Kartentext weiter, sonst überspringen.
+      if (!cardText) { skipped.push(`${slug} (Seite: ${e instanceof Error ? e.message : e})`); continue; }
+    }
+    if (!title) title = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    if (UNSOLICITED_RE.test(`${title} ${slug}`)) { skipped.push(`${title} (Initiativbewerbung)`); continue; }
+    // Ort auf "Zürich or Munich" o.ä. kürzen: Zusatz wie "· Full-time" abschneiden.
+    const loc = location?.split(/\s*[·•|]\s*/).find(p => CITY_RE.test(p))?.trim() ?? location;
+    if (!isMunichArea(loc)) { skipped.push(`${title} (${loc ?? 'Ort unbekannt'})`); continue; }
+    const job: JobInput = { company: 'MicroAGI', title, location: loc!, url, source_portal: 'microagi-html' };
+    job.hash = hashJob(job);
+    out.push(job);
+  }
+
+  console.log(`  [debug MicroAGI] ${cards.size} Stellen-Seite(n) gefunden, ${out.length} in München.${skipped.length ? ` Aussortiert: ${skipped.join('; ')}` : ''}`);
+  if (!cards.size) {
+    console.log(`  [debug MicroAGI] 0 Stellen-Links. HTML ${html.length} Bytes, Seitentitel "${$('title').first().text().trim()}", ${$('a[href]').length} Links.`);
+  }
+  return out;
+}
+
 async function scrapeRobCo(): Promise<JobInput[]> {
   // IDs aus der Karriere-URL (Filter Engineering / München).
   return scrapeAshby({
@@ -1003,6 +1085,7 @@ export const scrapers: Scraper[] = [
   { company: 'Helsing',         run: wrap('Helsing',         scrapeHelsing) },
   { company: 'Isar Aerospace',  run: wrap('Isar Aerospace',  scrapeIsarAerospace) },
   { company: 'RobCo',           run: wrap('RobCo',           scrapeRobCo) },
+  { company: 'MicroAGI',        run: wrap('MicroAGI',        scrapeMicroAgi) },
 ];
 
 function wrap(company: string, fn: () => Promise<JobInput[]>) {

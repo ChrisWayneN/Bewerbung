@@ -148,6 +148,7 @@ scripts/scrape.ts                    # CLI
 | ✅ | Agile Robots SE | Personio | `agile-robots-se.jobs.personio.de` |
 | ✅ | Franka Robotics | Personio | `franka-robotics.jobs.personio.de` |
 | ✅ | RobCo | Ashby | `jobs.ashbyhq.com/robco` – Filter Engineering + München per Abteilungs-/Standort-ID aus der rob.co-Karriere-URL |
+| ⚠️ | MicroAGI | eigene Website | `microagi.ai/careers` – kein Filter: alle Stellenseiten laden, nur Ort München/Munich behalten |
 | ✅ | Siemens | Phenom People | `jobs.siemens.com/api/jobs` |
 | ✅ | IABG | Engage-Servlet | `jobboerse.iabg.de/engage/jobexchange/` (HQ Ottobrunn) |
 | ✅ | KNDS | SAP SF CSB | `jobs.knds.de/content/search/` |
