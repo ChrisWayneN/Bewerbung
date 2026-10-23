@@ -17,8 +17,18 @@ Job-Tracking-Tool für 21 Firmen im Großraum München (30-km-Radius).
 2. **`launcher\verknuepfungen-erstellen.bat` doppelklicken** (einmalig) – legt
    „Job Tracker München“ und „Jobs scrapen“ mit Logo im Projektordner und auf dem
    Desktop an. Nach dem Verschieben des Projektordners erneut ausführen.
-3. **„Job Tracker München“** startet den lokalen Server und öffnet den Browser.
-   **„Jobs scrapen“** holt neue Stellen (danach im Browser neu laden).
+3. **„Job Tracker München“** holt zuerst neue Stellen (übersprungen, wenn der letzte
+   Lauf < 2 Stunden her ist), startet dann den lokalen Server und öffnet den Browser.
+   **„Jobs scrapen“** holt neue Stellen zwischendurch (danach im Browser neu laden).
+4. Optional: **`launcher\taeglich-scrapen-einrichten.bat`** (einmalig) richtet in der
+   Windows-Aufgabenplanung einen täglichen Lauf um 07:45 Uhr ein – war der Rechner
+   aus, wird er nachgeholt. Protokoll: `debug\scrape-letzter-lauf.txt`.
+   Entfernen: `launcher\taeglich-scrapen-entfernen.bat`.
+
+Oben in der Leiste lässt sich zwischen drei Blättern umschalten: **Stellen**
+(aktuelle Liste), **Ausgeblendet** (manuell ausgeblendete und abgelehnte Stellen,
+dort wieder einblendbar) und **Blacklist** (nur Titel der Stellen, die die
+Blacklist beim Scrapen aussortiert hat – zur Kontrolle, filterbar nach Schlagwort).
 
 ### Variante B – Kommandozeile
 
@@ -38,6 +48,7 @@ npm run scrape -- --only Airbus      # nur Airbus
 npm run scrape -- --only Hensoldt,Airbus,IABG
 npm run scrape -- --concurrency 2    # langsam-und-sicher
 npm run scrape -- --no-enrich        # ohne Laden von Aufgaben/Profil (schneller)
+npm run scrape -- --skip-if-recent 120   # nichts tun, wenn der letzte Lauf < 120 Min. her ist
 npm run reset                        # entfernt Einträge alter Firmen aus der DB
 ```
 
@@ -104,7 +115,7 @@ rm db/jobs.db && npm run scrape
 
 | Ordner/Datei | Inhalt |
 |---|---|
-| `launcher/` | Doppelklick-Starter (`start-tracker.bat`, `scrape-jobs.bat`), Logo und Skript für die Verknüpfungen |
+| `launcher/` | Doppelklick-Starter (`start-tracker.bat`, `scrape-jobs.bat`), Logo, Skript für die Verknüpfungen und für den täglichen automatischen Lauf |
 | `src/` | Quellcode: Web-Oberfläche (`src/app`), Datenbank-Zugriff (`src/lib`), Scraper je Firma (`src/scrapers`), Blacklist (`src/config`) |
 | `scripts/` | Kommandozeilen-Befehle hinter `npm run …` (scrape, enrich, inspect-…) |
 | `db/` | Datenbank `jobs.db` mit allen Stellen, Status und Bewertungen + Tabellen-Definition `schema.sql` |

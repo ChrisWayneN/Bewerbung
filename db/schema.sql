@@ -65,6 +65,19 @@ CREATE TABLE IF NOT EXISTS status_urls (
   set_at TEXT NOT NULL
 );
 
+-- Stellen, die die Blacklist (src/config/blacklist.json) beim Scrapen
+-- aussortiert hat – nur zur Kontrolle (Blatt "Blacklist"), ohne Beschreibung.
+-- Je Firma auf den Stand des letzten erfolgreichen Laufs gebracht.
+CREATE TABLE IF NOT EXISTS blacklisted_jobs (
+  url TEXT PRIMARY KEY,
+  company TEXT NOT NULL,
+  title TEXT NOT NULL,
+  location TEXT,
+  term TEXT,
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL
+);
+
 -- FTS5 virtual table for full-text search.
 CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
   title, company, location, tasks, qualifications, description_raw,

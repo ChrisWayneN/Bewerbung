@@ -1,5 +1,5 @@
 import { scrapers } from './companies';
-import { upsertJobs, recordImportRun, recordScraperStatus, deleteJobsByTitleKeywords, deleteStaleJobsForCompany } from '../lib/db';
+import { upsertJobs, recordImportRun, recordScraperStatus, deleteJobsByTitleKeywords, deleteStaleJobsForCompany, recordBlacklisted } from '../lib/db';
 import { getBlacklistKeywords, matchedBlacklistTerm } from '../lib/blacklist';
 import { enrichJobs } from './enrich';
 
@@ -33,12 +33,15 @@ export async function runAllScrapers(opts: RunOptions = {}) {
       const tStart = Date.now();
       try {
         const result = await s.run();
-        // Blacklist-Filter vor Upsert: rausgefilterte Jobs landen gar nicht erst in der DB.
+        // Blacklist-Filter vor Upsert: rausgefilterte Jobs landen nicht in der
+        // Stellenliste, nur (ohne Beschreibung) im Kontroll-Blatt "Blacklist".
+        const blocked: { url: string; title: string; location?: string | null; term: string }[] = [];
         const allowed = result.jobs.filter(j => {
           const term = matchedBlacklistTerm(j.title);
-          if (term) { totalBlacklisted++; return false; }
+          if (term) { totalBlacklisted++; blocked.push({ url: j.url, title: j.title, location: j.location, term }); return false; }
           return true;
         });
+        recordBlacklisted(s.company, blocked, result.status === 'ok' && result.jobs.length > 0);
         const up = upsertJobs(allowed);
         totalJobs += allowed.length;
         totalNew += up.inserted;

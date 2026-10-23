@@ -251,6 +251,8 @@ export interface ListFilters {
   includeHidden?: boolean;
   /** Zeigt status='abgelehnt'-Stellen (per Klick auf "5: Abgelehnt"). */
   includeRejected?: boolean;
+  /** Blatt "Ausgeblendet": NUR hidden=1-Stellen (manuell ausgeblendet + abgelehnt). */
+  onlyHidden?: boolean;
   /** Nur A-bewertete Stellen anzeigen. */
   onlyA?: boolean;
   /** Nur Stellen mit status='beworben'. */
@@ -272,7 +274,9 @@ export function listJobs(filters: ListFilters = {}): JobView[] {
   // Sichtbarkeit: hidden=0 immer sichtbar.
   //   includeHidden  → manuell ausgeblendete (hidden=1, status != 'abgelehnt')
   //   includeRejected → abgelehnte (hidden=1, status='abgelehnt')
-  {
+  if (filters.onlyHidden) {
+    where.push('j.hidden = 1');
+  } else {
     const vis: string[] = ['j.hidden = 0'];
     if (filters.includeRejected) vis.push("(j.hidden = 1 AND j.status = 'abgelehnt')");
     if (filters.includeHidden)   vis.push("(j.hidden = 1 AND (j.status IS NULL OR j.status != 'abgelehnt'))");
@@ -456,12 +460,14 @@ export function listCompanies(): string[] {
 /** Stellen-Anzahl pro Firma, optional unter Berücksichtigung von
  *  onlyNew (siehe ONLY_NEW_SQL) und includeHidden. Wird im Firmen-
  *  Dropdown angezeigt und reagiert daher auf dieselben Checkboxen. */
-export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; includeRejected?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
+export function getCompanyCounts(filters: { onlyNew?: boolean; includeHidden?: boolean; includeRejected?: boolean; onlyHidden?: boolean; onlyA?: boolean; onlyApplied?: boolean; onlyInProcess?: boolean } = {}): Record<string, number> {
   const db = getDb();
   const baseline = getPreviousImportTimestamp();
   const where: string[] = [];
   const params: Record<string, unknown> = { baseline };
-  {
+  if (filters.onlyHidden) {
+    where.push('j.hidden = 1');
+  } else {
     const vis: string[] = ['j.hidden = 0'];
     if (filters.includeRejected) vis.push("(j.hidden = 1 AND j.status = 'abgelehnt')");
     if (filters.includeHidden)   vis.push("(j.hidden = 1 AND (j.status IS NULL OR j.status != 'abgelehnt'))");
@@ -531,26 +537,87 @@ export function deleteJobsByTitleKeywords(keywords: string[]): { deleted: number
   const needles = keywords.map(normalizeForMatch);
 
   const db = getDb();
-  const all = db.prepare('SELECT id, title, status, rating FROM jobs').all() as
-    { id: number; title: string; status: string | null; rating: string | null }[];
-  const toDelete: number[] = [];
+  const all = db.prepare('SELECT id, company, title, location, url, first_seen, status, rating FROM jobs').all() as
+    { id: number; company: string; title: string; location: string | null; url: string; first_seen: string; status: string | null; rating: string | null }[];
+  const toDelete: { id: number; company: string; title: string; location: string | null; url: string; first_seen: string; term: string }[] = [];
   const samples: string[] = [];
   for (const row of all) {
     if (row.status && row.status !== 'abgelehnt') continue;
     if (row.rating) continue;
     const hay = normalizeForMatch(row.title ?? '');
-    if (needles.some(n => matchNeedle(hay, n))) {
-      toDelete.push(row.id);
+    const idx = needles.findIndex(n => matchNeedle(hay, n));
+    if (idx >= 0) {
+      toDelete.push({ ...row, term: keywords[idx] });
       if (samples.length < 5) samples.push(row.title);
     }
   }
   if (!toDelete.length) return { deleted: 0, samples: [] };
-  const tx = db.transaction((ids: number[]) => {
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
     const del = db.prepare('DELETE FROM jobs WHERE id = ?');
-    for (const id of ids) del.run(id);
+    // Im Blatt "Blacklist" sichtbar halten, was hier rausfliegt.
+    const keep = db.prepare(`
+      INSERT INTO blacklisted_jobs (url, company, title, location, term, first_seen, last_seen)
+      VALUES (@url, @company, @title, @location, @term, @first_seen, @now)
+      ON CONFLICT(url) DO UPDATE SET term=excluded.term, last_seen=excluded.last_seen
+    `);
+    for (const d of toDelete) {
+      del.run(d.id);
+      keep.run({ ...d, now });
+    }
   });
-  tx(toDelete);
+  tx();
   return { deleted: toDelete.length, samples };
+}
+
+/* ---------------- Blacklist-Kontrolle (Blatt "Blacklist") ---------------- */
+
+export interface BlacklistedJob {
+  url: string;
+  company: string;
+  title: string;
+  location: string | null;
+  term: string | null;
+  first_seen: string;
+  last_seen: string;
+}
+
+/** Merkt sich die beim Scrapen per Blacklist aussortierten Stellen einer Firma.
+ *  prune=true (erfolgreicher Lauf): Einträge der Firma, die diesmal nicht mehr
+ *  aussortiert wurden (Stelle weg oder Schlagwort entfernt), werden gelöscht. */
+export function recordBlacklisted(
+  company: string,
+  jobs: { url: string; title: string; location?: string | null; term: string }[],
+  prune: boolean,
+): void {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    const up = db.prepare(`
+      INSERT INTO blacklisted_jobs (url, company, title, location, term, first_seen, last_seen)
+      VALUES (@url, @company, @title, @location, @term, @now, @now)
+      ON CONFLICT(url) DO UPDATE SET company=excluded.company, title=excluded.title,
+        location=excluded.location, term=excluded.term, last_seen=excluded.last_seen
+    `);
+    for (const j of jobs) up.run({ url: j.url, company, title: j.title, location: j.location ?? null, term: j.term, now });
+    if (prune) {
+      const keep = new Set(jobs.map(j => j.url));
+      const rows = db.prepare('SELECT url FROM blacklisted_jobs WHERE company = ?').all(company) as { url: string }[];
+      const del = db.prepare('DELETE FROM blacklisted_jobs WHERE url = ?');
+      for (const r of rows) if (!keep.has(r.url)) del.run(r.url);
+    }
+  });
+  tx();
+}
+
+export function listBlacklisted(): BlacklistedJob[] {
+  return getDb().prepare('SELECT * FROM blacklisted_jobs ORDER BY company, title').all() as BlacklistedJob[];
+}
+
+/** Zeitpunkt des letzten Scrape-Laufs (oder null, falls noch nie gescrapt). */
+export function getLastImportTimestamp(): string | null {
+  const row = getDb().prepare('SELECT run_at FROM imports ORDER BY id DESC LIMIT 1').get() as { run_at: string } | undefined;
+  return row?.run_at ?? null;
 }
 
 /* ---------------- Detail-Anreicherung (Aufgaben / Profil) ---------------- */

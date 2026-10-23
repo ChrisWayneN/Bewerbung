@@ -1,8 +1,9 @@
 @echo off
 REM ============================================================
 REM  Job-Tracker starten
-REM  Doppelklick startet den lokalen Web-Server und oeffnet den
-REM  Browser auf http://localhost:3000
+REM  Doppelklick holt zuerst neue Stellen (scrapen), startet dann
+REM  den lokalen Web-Server und oeffnet den Browser auf
+REM  http://localhost:3000
 REM  Zum Beenden das separate Server-Fenster schliessen.
 REM ============================================================
 REM Liegt in launcher\ - Projektordner ist eine Ebene hoeher.
@@ -19,6 +20,14 @@ if not exist "node_modules" (
         exit /b 1
     )
 )
+
+REM -- Vorher neue Stellen holen. Uebersprungen, wenn der letzte Lauf
+REM    (z.B. der taegliche automatische) weniger als 2 Stunden her ist.
+REM    Fehler einzelner Firmen halten den Start nicht auf.
+echo Hole neue Stellen von allen Firmen (dauert ein paar Minuten)...
+echo.
+call npm run scrape -- --skip-if-recent 120
+echo.
 
 echo Starte Job-Tracker Web-Server...
 REM Server laeuft in eigenem Fenster weiter (cmd /k haelt es offen).
