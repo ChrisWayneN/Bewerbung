@@ -25,12 +25,13 @@ export async function scrapePersonio(cfg: PersonioConfig): Promise<JobInput[]> {
   const xml = await fetchText(xmlUrl, { headers: { accept: 'application/xml,text/xml' } });
   const $ = cheerio.load(xml, { xmlMode: true });
   const out: JobInput[] = [];
+  const otherOffices = new Map<string, number>();
   $('position').each((_, pos) => {
     const $p = $(pos);
     const id = $p.find('id').first().text().trim();
     const title = $p.find('name').first().text().trim();
     const office = $p.find('office').first().text().trim();
-    if (!isMunichArea(office)) return;
+    if (!isMunichArea(office)) { otherOffices.set(office || '–', (otherOffices.get(office || '–') ?? 0) + 1); return; }
 
     const urlTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const url = `https://${cfg.tenant}.jobs.personio.${tld}/job/${id}?display=${encodeURIComponent(urlTitle)}`;
@@ -57,5 +58,8 @@ export async function scrapePersonio(cfg: PersonioConfig): Promise<JobInput[]> {
     job.hash = hashJob(job);
     out.push(job);
   });
+  if (otherOffices.size) {
+    console.log(`  [debug ${cfg.company}] ${out.length} Stellen im Großraum München, außerhalb: ${[...otherOffices].map(([o, c]) => `${o} (${c})`).join(', ')}.`);
+  }
   return out;
 }
