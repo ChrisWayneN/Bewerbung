@@ -14,6 +14,12 @@ import { scrapePersonio } from './personio';
  * Seiten rendern die Liste erst per JavaScript und haben die Pfade nur im
  * eingebetteten Seitenzustand.
  */
+/** Ergebnislisten, bei denen die Seite selbst "keine offenen Stellen" meldet
+ *  (0 Treffer ist dann korrekt, kein Scraper-Problem). */
+const confirmedEmpty = new WeakSet<JobInput[]>();
+export function isConfirmedEmpty(jobs: JobInput[]): boolean { return confirmedEmpty.has(jobs); }
+const NO_JOBS_RE = /(derzeit|aktuell|momentan|zurzeit|zur zeit)\s+(leider\s+)?keine\s+(offenen\s+)?(stellen|positionen|stellenangebote|jobs)|keine offenen (stellen|positionen)|no (open )?(positions|vacancies|jobs) (are )?(currently )?(available|open)|currently no open (positions|roles|jobs)/i;
+
 export interface CareerSiteConfig {
   company: string;
   listUrl: string;
@@ -155,6 +161,17 @@ export async function scrapeCareerSite(cfg: CareerSiteConfig): Promise<JobInput[
       console.log(`  ${tag} Keine Stellen-Links, aber Personio-Board "${personio[1]}" eingebettet – nutze dessen Feed.`);
       return scrapePersonio({ company: cfg.company, tenant: personio[1], tld: personio[2] as 'de' | 'com' });
     }
+    // Sagt die Seite selbst "keine offenen Stellen"? Dann ist 0 korrekt.
+    const $t = cheerio.load(html);
+    $t('script, style, noscript').remove();
+    const text = $t('body').text().replace(/\s+/g, ' ').trim();
+    const none = NO_JOBS_RE.exec(text);
+    if (none) {
+      console.log(`  ${tag} Seite meldet "${none[0]}" → 0 Stellen sind korrekt.`);
+      const empty: JobInput[] = [];
+      confirmedEmpty.add(empty);
+      return empty;
+    }
     const samples: string[] = [];
     $('a[href]').each((_, a) => {
       const t = $(a).text().trim().replace(/\s+/g, ' ');
@@ -162,11 +179,9 @@ export async function scrapeCareerSite(cfg: CareerSiteConfig): Promise<JobInput[
     });
     console.log(`  ${tag} 0 Stellen-Links. HTML ${html.length} Bytes, Seitentitel "${$('title').first().text().trim()}", ${$('a[href]').length} Links, iframes: ${$('iframe[src]').map((_, f) => $(f).attr('src')).get().join(' ') || '–'}`);
     console.log(`  ${tag} Links mit Text:\n    ${samples.join('\n    ')}`);
-    // Hinweise, woher eine per JavaScript geladene Liste kommt, bzw. ob die Seite "keine Stellen" sagt.
+    // Hinweise, woher eine per JavaScript geladene Liste kommt.
     const hosts = [...new Set([...html.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map(m => m[1].toLowerCase()))].filter(h => !h.endsWith(host));
     const scripts = $('script[src]').map((_, el) => $(el).attr('src')).get();
-    $('script, style, noscript').remove();
-    const text = $('body').text().replace(/\s+/g, ' ').trim();
     console.log(`  ${tag} Fremde Adressen im HTML: ${hosts.slice(0, 15).join(' ') || '–'}`);
     console.log(`  ${tag} Skripte: ${scripts.slice(0, 10).join(' ') || '–'}`);
     console.log(`  ${tag} Seitentext: ${text.slice(0, 400) || '–'}`);

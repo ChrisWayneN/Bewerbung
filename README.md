@@ -165,7 +165,7 @@ scripts/scrape.ts                    # CLI
 | ✅ | Franka Robotics | Personio | `franka-robotics.jobs.personio.de` |
 | ✅ | RobCo | Ashby | `jobs.ashbyhq.com/robco` – Filter Engineering + München per Abteilungs-/Standort-ID aus der rob.co-Karriere-URL |
 | ⚠️ | MicroAGI | eigene Website | `microagi.ai/careers` – kein Filter: alle Stellenseiten laden, nur Ort München/Munich behalten |
-| ⚠️ | Rocket | zvoove Recruit | `rocket-gmbh.recruit.zvoove.cloud` (Quelle hinter `rocket.gmbh/jobs`) – kein Filter: nur Arbeitsort München/Umland behalten |
+| ⚠️ | Rocket | zvoove Recruit | `rocket-gmbh.recruit.zvoove.cloud/api/public/v1/Stelle/…` (Quelle hinter `rocket.gmbh/jobs`) – kein Filter: nur Arbeitsort München/Umland behalten |
 | ✅ | eMoSys | Personio | `emosys-gmbh.jobs.personio.de` (Sitz Starnberg; XML-Feed aus → Board-Seite) |
 | ✅ | Siemens | Phenom People | `jobs.siemens.com/api/jobs` |
 | ✅ | IABG | Engage-Servlet | `jobboerse.iabg.de/engage/jobexchange/` (HQ Ottobrunn) |
@@ -178,6 +178,7 @@ scripts/scrape.ts                    # CLI
 | ⚠️ | MTU | HTML | `mtu.de/careers/online-job-market` |
 
 ⚠️-Scraper: bei Misserfolg wird automatisch ein „link-only"-Eintrag erzeugt, damit die Firma sichtbar bleibt.
+Meldet eine Karriereseite selbst „keine offenen Stellen“ (z.B. Franka), zählt 0 Stellen als ✅.
 
 ## „Neu seit letztem Import"
 

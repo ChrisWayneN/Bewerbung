@@ -20,7 +20,8 @@ import { scrapeTypesense } from './portals/typesense';
 import { scrapeRecruitee } from './portals/recruitee';
 import { scrapeSapCSB } from './portals/sapCSB';
 import { scrapeAshby } from './portals/ashby';
-import { scrapeCareerSite } from './portals/careerSite';
+import { scrapeZvoove } from './portals/zvoove';
+import { scrapeCareerSite, isConfirmedEmpty } from './portals/careerSite';
 import { extractInlineJson, findJobArrays, pickString } from './inlineJson';
 import { kndsJobUrl } from '../lib/knds';
 
@@ -43,13 +44,13 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'MTU',             careersUrl: 'https://www.mtu.de/careers/online-job-market/',        portal: 'html',           status: '✅', note: 'MTU Aero Engines – SSR-HTML, Server-Filter via URL /s/all/münchen_ger/all/professionals/. div.jobs-list__item ohne --filtered.' },
   { name: 'Airbus',          careersUrl: 'https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995&locations=f5811cef9cb501a49eac0a694c0a8244&jobFamilyGroup=f5811cef9cb5018463377f3f550a1bf2&jobFamilyGroup=f5811cef9cb501e5d34e803f550a21f2', portal: 'workday', status: '✅', note: 'wd3, tenant=ag, site=Airbus. Server-seitige appliedFacets: München-Standort + 2 bewusst gewählte Job-Familien (nicht alle Kategorien).' },
   { name: 'Quantum Systems', careersUrl: 'https://career.quantum-systems.com/',                  portal: 'personio?',      status: '⚠️', note: 'Eigene Domain – probiert Personio-Slug "quantum-systems" und HTML-Fallback' },
-  { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio' },
+  { name: 'Franka Robotics', careersUrl: 'https://franka-robotics.jobs.personio.de/',            portal: 'personio',       status: '✅', note: 'Tochter von Agile Robots, eigenes Personio. Zeigt die Seite "Derzeit keine offenen Positionen", gilt 0 Stellen als OK.' },
   { name: 'Neura Robotics',  careersUrl: 'https://jobs.neura-robotics.com/search',               portal: 'talentsconnect', status: '⚠️', note: 'talentsconnect AG – HTML-Scraping, HQ Metzingen' },
   { name: 'Helsing',         careersUrl: 'https://helsing.ai/de/jobs',                            portal: 'greenhouse',     status: '✅', note: 'boards-api.greenhouse.io/v1/boards/helsing/jobs. Greenhouse-Board hat kein department-Feld → nur Location-Filter (München).' },
   { name: 'Isar Aerospace',  careersUrl: 'https://job-boards.eu.greenhouse.io/isaraerospace?offices%5B%5D=4008032101', portal: 'greenhouse-html-eu', status: '✅', note: 'Greenhouse-Job-Board (job-boards.eu.greenhouse.io), SSR-HTML mit Pagination ?page=N und Server-Filter ?offices[]=4008032101. Die klassische boards-api kennt das Board nicht.' },
   { name: 'RobCo',           careersUrl: 'https://www.rob.co/de/karriere?ashby_department_id=a61b8758-b437-4773-9761-865d93cd8921&ashby_location_id=abeb7da6-c990-4487-9710-a18923250a7f#open-positions', portal: 'ashby', status: '✅', note: 'Ashby-Job-Board (Embed auf rob.co). Filter wie auf der Karriereseite: Abteilung Engineering (ashby_department_id, inkl. Unter-Teams) + Standort München (ashby_location_id) über das Board-GraphQL; Beschreibungen aus der Ashby-Posting-API.' },
   { name: 'MicroAGI',        careersUrl: 'https://www.microagi.ai/careers',                     portal: 'microagi-html',  status: '⚠️', note: 'Eigene Website ohne Filter/Portal. Alle Links /careers/<slug> einsammeln, jede Stellenseite laden; München-Filter über die Ortszeile (z.B. "Zürich or Munich"). Initiativbewerbung wird übersprungen.' },
-  { name: 'Rocket',          careersUrl: 'https://rocket.gmbh/jobs/',                          portal: 'zvoove',         status: '⚠️', note: 'rocket Engineering GmbH. rocket.gmbh/jobs lädt die Liste per JS aus zvoove Recruit (rocket-gmbh.recruit.zvoove.cloud/stelle/…) – dort gelesen, kein Filter, nur Großraum München behalten (Ort aus Liste/Stellenseite/URL).' },
+  { name: 'Rocket',          careersUrl: 'https://rocket.gmbh/jobs/',                          portal: 'zvoove',         status: '⚠️', note: 'rocket Engineering GmbH. rocket.gmbh/jobs lädt die Liste per JS aus zvoove Recruit (rocket-gmbh.recruit.zvoove.cloud, Angular-App) – deren öffentliche API /api/public/v1/Stelle/GetStellenFiltered gelesen (Fallback: API-Pfade aus dem App-Bundle). Kein Filter, nur Großraum München behalten.' },
   { name: 'eMoSys',          careersUrl: 'https://emosys-gmbh.jobs.personio.de/',              portal: 'personio',       status: '✅', note: 'Personio emosys-gmbh (XML-Feed abgeschaltet → Stellenseite des Boards); Sitz Starnberg (zählt zum Großraum München).' },
 ];
 
@@ -996,35 +997,16 @@ async function scrapeMicroAgi(): Promise<JobInput[]> {
 }
 
 /** Rocket (rocket Engineering GmbH): rocket.gmbh/jobs lädt die Liste per
- *  JavaScript aus zvoove Recruit (rocket-gmbh.recruit.zvoove.cloud). Dort direkt
- *  lesen; kein Filter → nur Stellen im Großraum München behalten. Der Ort steht
- *  auch in der Stellen-URL: /stelle/<titel>-<nr>-<ort>-<hash>. */
-const ROCKET_ZVOOVE = 'https://rocket-gmbh.recruit.zvoove.cloud';
-function zvooveCityFromUrl(url: string): string | null {
-  const m = /\/stelle\/.+?-\d{3,}-([a-z0-9-]+?)-[0-9a-f]{20,}\/?$/i.exec(new URL(url).pathname);
-  if (!m) return null;
-  // "muenchen" → "München", "bad-toelz" → "Bad Tölz"
-  return m[1].replace(/m(?:ue|u)nchen/g, 'münchen').replace(/oe/g, 'ö').replace(/ae/g, 'ä').replace(/ue/g, 'ü')
-    .split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
+ *  JavaScript aus zvoove Recruit (rocket-gmbh.recruit.zvoove.cloud, selbst eine
+ *  Angular-App) → direkt deren öffentliche API lesen; kein Filter → nur Stellen
+ *  im Großraum München behalten. */
 async function scrapeRocket(): Promise<JobInput[]> {
-  let last: JobInput[] = [];
-  for (const listUrl of [`${ROCKET_ZVOOVE}/`, `${ROCKET_ZVOOVE}/stellen`, `${ROCKET_ZVOOVE}/stellenangebote`]) {
-    try {
-      last = await scrapeCareerSite({
-        company: 'Rocket',
-        listUrl,
-        jobPath: /^\/stelle\/[^/]+\/?$/i,
-        sourcePortal: 'zvoove',
-        skipTitle: UNSOLICITED_RE,
-        locationFromUrl: zvooveCityFromUrl,
-      });
-      if (last.length) return last;
-    } catch (e) {
-      console.log(`  [debug Rocket] ${listUrl}: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-  return last;
+  return scrapeZvoove({
+    company: 'Rocket',
+    host: 'https://rocket-gmbh.recruit.zvoove.cloud',
+    origin: 'rocket-engineering-gmbh',
+    skipTitle: UNSOLICITED_RE,
+  });
 }
 
 /** eMoSys (Starnberg): Personio-Board emosys-gmbh.jobs.personio.de. */
@@ -1073,6 +1055,7 @@ function wrap(company: string, fn: () => Promise<JobInput[]>) {
   return async (): Promise<ScrapeResult> => {
     try {
       const jobs = await fn();
+      if (!jobs.length && isConfirmedEmpty(jobs)) return { jobs, status: 'ok', error: 'laut Karriereseite derzeit keine offenen Stellen' };
       return { jobs, status: jobs.length ? 'ok' : 'partial' };
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
