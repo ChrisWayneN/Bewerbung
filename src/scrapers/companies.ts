@@ -50,7 +50,7 @@ export const COMPANIES: CompanyMeta[] = [
   { name: 'RobCo',           careersUrl: 'https://www.rob.co/de/karriere?ashby_department_id=a61b8758-b437-4773-9761-865d93cd8921&ashby_location_id=abeb7da6-c990-4487-9710-a18923250a7f#open-positions', portal: 'ashby', status: '✅', note: 'Ashby-Job-Board (Embed auf rob.co). Filter wie auf der Karriereseite: Abteilung Engineering (ashby_department_id, inkl. Unter-Teams) + Standort München (ashby_location_id) über das Board-GraphQL; Beschreibungen aus der Ashby-Posting-API.' },
   { name: 'MicroAGI',        careersUrl: 'https://www.microagi.ai/careers',                     portal: 'microagi-html',  status: '⚠️', note: 'Eigene Website ohne Filter/Portal. Alle Links /careers/<slug> einsammeln, jede Stellenseite laden; München-Filter über die Ortszeile (z.B. "Zürich or Munich"). Initiativbewerbung wird übersprungen.' },
   { name: 'Rocket',          careersUrl: 'https://rocket.gmbh/jobs/',                          portal: 'rocket-html',    status: '⚠️', note: 'Eigene Website ohne Filter. Alle Stellen-Links einsammeln, Arbeitsort aus der Liste (sonst Stellenseite), nur Großraum München behalten.' },
-  { name: 'eMoSys',          careersUrl: 'https://emosys-gmbh.jobs.personio.de/',              portal: 'personio',       status: '✅', note: 'Personio-XML-Feed emosys-gmbh.jobs.personio.de/xml; Sitz Starnberg (zählt zum Großraum München).' },
+  { name: 'eMoSys',          careersUrl: 'https://emosys-gmbh.jobs.personio.de/',              portal: 'personio',       status: '✅', note: 'Personio emosys-gmbh (XML-Feed abgeschaltet → Stellenseite des Boards); Sitz Starnberg (zählt zum Großraum München).' },
 ];
 
 function linkOnly(meta: CompanyMeta): JobInput {
@@ -599,7 +599,13 @@ async function scrapeDiehl(): Promise<JobInput[]> {
   };
 
   for (let p = 1; p <= 20; p++) {
-    html = await fetchText(`${DIEHL_LISTING}?${DIEHL_QUERY}&p=${p}`);
+    try {
+      html = await fetchText(`${DIEHL_LISTING}?${DIEHL_QUERY}&p=${p}`);
+    } catch (e) {
+      // Folgeseite existiert nicht (404) → Ende der Liste, kein Fehler.
+      if (p > 1 && e instanceof Error && /^HTTP 404\b/.test(e.message)) break;
+      throw e;
+    }
     pages++;
     $ = cheerio.load(html);
     const $$ = $;

@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import type { JobInput } from '../../lib/db';
 import { isMunichArea, hashJob, fetchText } from '../base';
 import { extractSectionsFromHtml } from '../extract';
+import { scrapeCareerSite } from './careerSite';
 
 /**
  * Personio exposes a public XML feed at:
@@ -22,8 +23,16 @@ export interface PersonioConfig {
 export async function scrapePersonio(cfg: PersonioConfig): Promise<JobInput[]> {
   const tld = cfg.tld ?? 'de';
   const xmlUrl = `https://${cfg.tenant}.jobs.personio.${tld}/xml`;
-  const xml = await fetchText(xmlUrl, { headers: { accept: 'application/xml,text/xml' } });
+  let xml: string;
+  try {
+    xml = await fetchText(xmlUrl, { headers: { accept: 'application/xml,text/xml' } });
+  } catch (e) {
+    // Manche Firmen schalten den XML-Feed ab (404) – dann die Stellenseite des Boards lesen.
+    if (e instanceof Error && /^HTTP 404\b/.test(e.message)) return scrapePersonioHtml(cfg, 'XML-Feed abgeschaltet (404)');
+    throw e;
+  }
   const $ = cheerio.load(xml, { xmlMode: true });
+  if ($('position').length === 0) return scrapePersonioHtml(cfg, 'XML-Feed leer');
   const out: JobInput[] = [];
   const otherOffices = new Map<string, number>();
   $('position').each((_, pos) => {
@@ -62,4 +71,19 @@ export async function scrapePersonio(cfg: PersonioConfig): Promise<JobInput[]> {
     console.log(`  [debug ${cfg.company}] ${out.length} Stellen im Großraum München, außerhalb: ${[...otherOffices].map(([o, c]) => `${o} (${c})`).join(', ')}.`);
   }
   return out;
+}
+
+/** Fallback ohne XML-Feed: Stellenliste des Personio-Boards (Links /job/<id>),
+ *  Ort aus der Liste bzw. dem JSON-LD der Stellenseite. Beschreibung lädt die
+ *  Detail-Anreicherung danach von der Stellenseite. */
+async function scrapePersonioHtml(cfg: PersonioConfig, why: string): Promise<JobInput[]> {
+  const tld = cfg.tld ?? 'de';
+  console.log(`  [debug ${cfg.company}] ${why} – lese stattdessen die Stellenseite des Personio-Boards.`);
+  return scrapeCareerSite({
+    company: cfg.company,
+    listUrl: `https://${cfg.tenant}.jobs.personio.${tld}/`,
+    jobPath: /^\/job\/\d+\/?$/,
+    sourcePortal: 'personio',
+    noPersonioDelegate: true,
+  });
 }

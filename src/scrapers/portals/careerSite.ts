@@ -23,7 +23,8 @@ export interface CareerSiteConfig {
   /** Titel, die keine Stelle sind (z.B. Initiativbewerbung). */
   skipTitle?: RegExp;
   /** Höchstzahl geladener Stellenseiten (Schutz vor Fehlerkennung). */
-  maxDetailPages?: number;
+  maxDetailPages?: number;  /** Nicht an ein eingebettetes Personio-Board weiterreichen (Aufruf kommt von dort). */
+  noPersonioDelegate?: boolean;
 }
 
 /** Orte, an denen eine Ortszeile erkannt wird (neben allen München-Orten). */
@@ -147,7 +148,7 @@ export async function scrapeCareerSite(cfg: CareerSiteConfig): Promise<JobInput[
 
   // Keine Stellen-Links, aber ein eingebettetes Personio-Board → das nehmen.
   if (!cards.size) {
-    const personio = html.match(/([a-z0-9-]+)\.jobs\.personio\.(de|com)/i);
+    const personio = cfg.noPersonioDelegate ? null : html.match(/([a-z0-9-]+)\.jobs\.personio\.(de|com)/i);
     if (personio) {
       console.log(`  ${tag} Keine Stellen-Links, aber Personio-Board "${personio[1]}" eingebettet – nutze dessen Feed.`);
       return scrapePersonio({ company: cfg.company, tenant: personio[1], tld: personio[2] as 'de' | 'com' });
