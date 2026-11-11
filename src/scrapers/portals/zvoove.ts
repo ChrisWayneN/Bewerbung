@@ -26,9 +26,11 @@ export interface ZvooveConfig {
 type Obj = Record<string, unknown>;
 
 const TITLE_KEY = /^(stellen)?(bezeichnung|titel|title|jobtitle|stellentitel|positionsbezeichnung|stellenbezeichnung|name)$/i;
-const LOC_KEY = /(^|arbeits|einsatz)orte?(name|bezeichnung)?$|^stadt$|city|location|standort|^plz$|postleitzahl|^zip/i;
-const UUID_KEY = /uuid|^id$|stelleid$|stellenid$|^guid$/i;
-const NR_KEY = /(stellen)?(nummer|nr|number)$/i;
+// z.B. EinsatzortOrt, EinsatzortPlz, Arbeitsort, Ort, City (nicht: Sortierung).
+const LOC_KEY = /(?<!s)orte?(name|bezeichnung)?$|^stadt$|city|location|standort|plz$|postleitzahl|^zip/i;
+// Reihenfolge = Vorrang (MandantUuid o.ä. darf nicht gewinnen).
+const UUID_KEYS = [/^stelleuuid$/i, /^stelle.*uuid$/i, /^(uuid|id|guid)$/i];
+const NR_KEY = /^(stellen|stelle)?(id|nummer|nr|number)$/i;
 const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -83,8 +85,8 @@ function slug(s: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-function firstMatching(o: Obj, key: RegExp, test: (s: string) => boolean): string | null {
-  for (const [k, v] of Object.entries(o)) {
+function firstMatching(o: Obj, keys: RegExp | RegExp[], test: (s: string) => boolean): string | null {
+  for (const key of Array.isArray(keys) ? keys : [keys]) for (const [k, v] of Object.entries(o)) {
     if (!key.test(k) || (typeof v !== 'string' && typeof v !== 'number')) continue;
     const s = String(v);
     if (test(s)) return s;
@@ -92,14 +94,25 @@ function firstMatching(o: Obj, key: RegExp, test: (s: string) => boolean): strin
   return null;
 }
 
-/** Fließtext der Stelle (Aufgaben/Profil stehen oft als HTML in einzelnen Feldern). */
-function descriptionOf(o: Obj, title: string): string | null {
+/** Fließtext der Stelle (Aufgaben/Profil stehen oft als HTML in einzelnen, auch verschachtelten Feldern). */
+function descriptionOf(o: unknown, title: string): string | null {
   const parts: string[] = [];
-  for (const [k, v] of Object.entries(o)) {
-    if (typeof v !== 'string' || v.length < 120 || TITLE_KEY.test(k)) continue;
-    const text = /<[a-z][^>]*>/i.test(v) ? cheerio.load(v).root().text() : v;
-    if (text.trim() && text.trim() !== title) parts.push(text.trim());
-  }
+  const walk = (v: unknown, key: string, depth: number) => {
+    if (depth > 5 || v == null) return;
+    if (typeof v === 'string') {
+      if (v.length < 80 || TITLE_KEY.test(key) || /^https?:/.test(v)) return;
+      const text = (/<[a-z][^>]*>/i.test(v) ? cheerio.load(v.replace(/<\/(p|li|div|h\d)>|<br\s*\/?>/gi, '$&\n')).root().text() : v).trim();
+      if (!text || text === title || parts.some(x => x.endsWith(text))) return;
+      // Feldname als Überschrift, damit die Aufgaben/Profil-Erkennung greift (Feld "Aufgaben" → "Aufgaben:").
+      const label = /aufgab|t(ae|ä)tigkeit|profil|anforder|qualifik|erwart|biete|benefit/i.test(key) && !/aufgab|profil|anforder|qualifik|bieten/i.test(text.slice(0, 40))
+        ? `${key.replace(/([a-z])([A-Z])/g, '$1 $2')}:\n` : '';
+      parts.push(label + text);
+      return;
+    }
+    if (Array.isArray(v)) v.forEach(x => walk(x, key, depth + 1));
+    else if (isObj(v)) for (const [k, x] of Object.entries(v)) walk(x, k, depth + 1);
+  };
+  walk(o, '', 0);
   return parts.length ? parts.join('\n\n') : null;
 }
 
@@ -141,6 +154,25 @@ async function apiPathsFromBundle(host: string, tag: string): Promise<string[]> 
     } catch (e) { console.log(`  ${tag} ${c}: ${e instanceof Error ? e.message : e}`); }
   }
   return [...found];
+}
+
+/** Beschreibung (Aufgaben/Profil) einer Stelle aus GetStelleById – die Stellenseite selbst ist eine JS-App. */
+let detailParam: string | null | undefined;
+async function detailText(host: string, uuid: string, title: string, tag: string): Promise<string | null> {
+  const params = detailParam ? [detailParam] : detailParam === null ? [] : ['stelleUuid', 'uuid', 'id', 'stelleId'];
+  for (const p of params) {
+    try {
+      const data = await tryJson(`${host}/api/public/v1/Stelle/GetStelleById?${p}=${uuid}`);
+      const text = descriptionOf(data, title);
+      if (text && text.length > 200) {
+        if (detailParam === undefined) console.log(`  ${tag} Stellentexte über GetStelleById?${p}=… (${text.length} Zeichen bei der ersten Stelle)`);
+        detailParam = p;
+        return text;
+      }
+    } catch { /* nächsten Parameternamen probieren */ }
+  }
+  if (detailParam === undefined) { console.log(`  ${tag} GetStelleById liefert keinen Stellentext – Aufgaben/Profil fehlen.`); detailParam = null; }
+  return null;
 }
 
 export async function scrapeZvoove(cfg: ZvooveConfig): Promise<JobInput[]> {
@@ -200,17 +232,22 @@ export async function scrapeZvoove(cfg: ZvooveConfig): Promise<JobInput[]> {
     const locs = locationsOf(o);
     const location = locs.filter(l => !/^\d{5}$/.test(l)).join(', ') || locs.join(', ') || null;
     if (!location || !isMunichArea(location)) { skipped.push(`${title} (${location ?? 'Ort?'})`); continue; }
-    const uuid = firstMatching(o, UUID_KEY, s => UUID_RE.test(s));
+    const uuid = firstMatching(o, UUID_KEYS, s => UUID_RE.test(s));
     const nr = firstMatching(o, NR_KEY, s => /^\d{2,}$/.test(s));
     const city = locs.find(l => !/^\d{5}$/.test(l)) ?? '';
+    const linkSlug = typeof o.LinkSlug === 'string' ? o.LinkSlug : typeof o.linkSlug === 'string' ? o.linkSlug : '';
     const query = cfg.origin ? `?origin=${encodeURIComponent(cfg.origin)}` : '';
-    // Ohne UUID kein Stellen-Link bekannt → Startseite, per #Anker eindeutig.
-    const url = uuid
-      ? `${host}/stelle/${[slug(title), nr, slug(city), uuid.replace(/-/g, '').toLowerCase()].filter(Boolean).join('-')}${query}`
-      : `${host}/${query}#${nr ?? slug(title)}`;
+    // Stellen-URL wie auf der Seite: /stelle/<titel>-<nr>-<ort>-<uuid ohne Striche>.
+    // Enthält LinkSlug schon die Kennung, direkt nehmen. Ohne UUID → Startseite mit #Anker.
+    const url = /[0-9a-f]{32}/i.test(linkSlug)
+      ? `${host}/stelle/${linkSlug.replace(/^\/?(stelle\/)?/, '')}${query}`
+      : uuid
+        ? `${host}/stelle/${[slug(linkSlug || title), nr, slug(city), uuid.replace(/-/g, '').toLowerCase()].filter(Boolean).join('-')}${query}`
+        : `${host}/${query}#${nr ?? slug(title)}`;
+    if (!out.length) console.log(`  ${tag} Beispiel: LinkSlug="${linkSlug}", Nr=${nr ?? '–'}, StelleUuid=${uuid ?? '–'}, StelleLokalisierungUuid=${String(o.StelleLokalisierungUuid ?? o.stelleLokalisierungUuid ?? '–')} → ${url}`);
     const job: JobInput = {
       company: cfg.company, title, location, url, source_portal: 'zvoove',
-      description_raw: descriptionOf(o, title),
+      description_raw: (uuid ? await detailText(host, uuid, title, tag) : null) ?? descriptionOf(o, title),
     };
     job.hash = hashJob(job);
     out.push(job);
