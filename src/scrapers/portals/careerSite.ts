@@ -25,6 +25,8 @@ export interface CareerSiteConfig {
   /** Höchstzahl geladener Stellenseiten (Schutz vor Fehlerkennung). */
   maxDetailPages?: number;  /** Nicht an ein eingebettetes Personio-Board weiterreichen (Aufruf kommt von dort). */
   noPersonioDelegate?: boolean;
+  /** Ort aus der Stellen-URL, falls weder Liste noch Stellenseite einen nennen. */
+  locationFromUrl?: (url: string) => string | null;
 }
 
 /** Orte, an denen eine Ortszeile erkannt wird (neben allen München-Orten). */
@@ -160,6 +162,14 @@ export async function scrapeCareerSite(cfg: CareerSiteConfig): Promise<JobInput[
     });
     console.log(`  ${tag} 0 Stellen-Links. HTML ${html.length} Bytes, Seitentitel "${$('title').first().text().trim()}", ${$('a[href]').length} Links, iframes: ${$('iframe[src]').map((_, f) => $(f).attr('src')).get().join(' ') || '–'}`);
     console.log(`  ${tag} Links mit Text:\n    ${samples.join('\n    ')}`);
+    // Hinweise, woher eine per JavaScript geladene Liste kommt, bzw. ob die Seite "keine Stellen" sagt.
+    const hosts = [...new Set([...html.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map(m => m[1].toLowerCase()))].filter(h => !h.endsWith(host));
+    const scripts = $('script[src]').map((_, el) => $(el).attr('src')).get();
+    $('script, style, noscript').remove();
+    const text = $('body').text().replace(/\s+/g, ' ').trim();
+    console.log(`  ${tag} Fremde Adressen im HTML: ${hosts.slice(0, 15).join(' ') || '–'}`);
+    console.log(`  ${tag} Skripte: ${scripts.slice(0, 10).join(' ') || '–'}`);
+    console.log(`  ${tag} Seitentext: ${text.slice(0, 400) || '–'}`);
     return [];
   }
 
@@ -182,6 +192,7 @@ export async function scrapeCareerSite(cfg: CareerSiteConfig): Promise<JobInput[
     } catch (e) {
       if (!card.text) { skipped.push(`${url} (Seite: ${e instanceof Error ? e.message : e})`); continue; }
     }
+    if (!location && cfg.locationFromUrl) location = cfg.locationFromUrl(url);
     title = (pageTitle || title || decodeURIComponent(url.split('/').pop() ?? '').replace(/[-_]+/g, ' ')).trim();
     if (cfg.skipTitle?.test(title)) { skipped.push(`${title} (keine Stelle)`); continue; }
     // "Zürich or Munich · Full-time" → "Zürich or Munich", "Arbeitsort: München" → "München"
