@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SheetTabs } from './SheetTabs';
+import { ScrapeButton } from './ScrapeButton';
 
 export const metadata: Metadata = {
   title: 'Bewerbung – Job Tracker München',
@@ -17,7 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/jobs" className="font-semibold tracking-tight">
               Job Tracker München
             </Link>
-            <SheetTabs />
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
+              <ScrapeButton />
+              <SheetTabs />
+            </div>
           </div>
         </header>
         <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>

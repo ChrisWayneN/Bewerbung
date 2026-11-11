@@ -25,6 +25,11 @@ Job-Tracking-Tool für 21 Firmen im Großraum München (30-km-Radius).
    aus, wird er nachgeholt. Protokoll: `debug\scrape-letzter-lauf.txt`.
    Entfernen: `launcher\taeglich-scrapen-entfernen.bat`.
 
+Oben rechts startet **„Jetzt scrapen“** einen Lauf direkt aus der Seite (auch vom Handy);
+daneben steht der Fortschritt, ein Klick darauf zeigt die letzten Ausgabezeilen, und die
+Liste lädt sich nach dem Lauf selbst neu. Es läuft nie mehr als ein Lauf gleichzeitig
+(Sperre `debug/scrape.lock`) – egal ob über Button, Starter oder täglichen Lauf.
+
 Oben in der Leiste lässt sich zwischen drei Blättern umschalten: **Stellen**
 (aktuelle Liste), **Ausgeblendet** (manuell ausgeblendete und abgelehnte Stellen,
 dort wieder einblendbar) und **Blacklist** (nur Titel der Stellen, die die

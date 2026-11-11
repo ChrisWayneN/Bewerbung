@@ -10,6 +10,7 @@
  */
 import { runAllScrapers } from '../src/scrapers/runAll';
 import { getLastImportTimestamp } from '../src/lib/db';
+import { acquireLock, readActiveLock } from '../src/lib/scrapeRun';
 
 function parseArgs(): { only?: string[]; concurrency?: number; enrich: boolean; skipIfRecentMin?: number } {
   const args = process.argv.slice(2);
@@ -38,6 +39,12 @@ function parseArgs(): { only?: string[]; concurrency?: number; enrich: boolean; 
       console.log(`Letzter Scrape-Lauf vor ${Math.round(ageMin)} Min. – übersprungen (neu erst nach ${skipIfRecentMin} Min.).`);
       process.exit(0);
     }
+  }
+  // Nie zwei Läufe gleichzeitig (Button auf der Seite, Starter, täglicher Lauf).
+  if (!acquireLock()) {
+    const lock = readActiveLock();
+    console.log(`Es läuft bereits ein Scrape-Lauf (seit ${lock ? new Date(lock.startedAt).toLocaleTimeString('de-DE') : '?'}) – nichts zu tun.`);
+    process.exit(0);
   }
   const result = await runAllScrapers({ only, concurrency, enrich });
   const failed = result.summary.filter(s => s.status === 'fail').length;
