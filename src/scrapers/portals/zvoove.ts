@@ -27,7 +27,7 @@ type Obj = Record<string, unknown>;
 
 const TITLE_KEY = /^(stellen)?(bezeichnung|titel|title|jobtitle|stellentitel|positionsbezeichnung|stellenbezeichnung|name)$/i;
 // z.B. EinsatzortOrt, EinsatzortPlz, Arbeitsort, Ort, City (nicht: Sortierung).
-const LOC_KEY = /(?<!s)orte?(name|bezeichnung)?$|^stadt$|city|location|standort|plz$|postleitzahl|^zip/i;
+const LOC_KEY = /(?<!^s)orte?(name|bezeichnung)?$|^stadt$|city|location|standort|plz$|postleitzahl|^zip/i;
 // Reihenfolge = Vorrang (MandantUuid o.ä. darf nicht gewinnen).
 const UUID_KEYS = [/^stelleuuid$/i, /^stelle.*uuid$/i, /^(uuid|id|guid)$/i];
 const NR_KEY = /^(stellen|stelle)?(id|nummer|nr|number)$/i;
